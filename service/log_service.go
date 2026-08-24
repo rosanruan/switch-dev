@@ -45,7 +45,20 @@ func (s *LogService) ClearLogs() {
 	}
 }
 
-// GetLogStats 获取日志统计
+// GetLogStats 获取日志统计（进程内累计，重启归零；仪表盘总览用）
 func (s *LogService) GetLogStats() *LogStats {
 	return s.core.GetLogStats()
+}
+
+// LogCountsByRange 按日期范围统计各状态日志数（从数据库读取，重启后仍准确）
+// 返回 total/success/error/authError/fallback 计数，供日志页筛选按钮显示。
+func (s *LogService) LogCountsByRange(startDate, endDate string) map[string]int64 {
+	if s.core.DB() == nil {
+		return nil
+	}
+	counts, err := s.core.DB().LogCountsByRange(startDate, endDate)
+	if err != nil {
+		return nil
+	}
+	return counts
 }

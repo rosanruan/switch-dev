@@ -279,7 +279,11 @@ func main() {
 	// 首次刷新注册免费上游 + 模型（启动时构建）
 	registerProviderAPIRefresh(server, providerAPIMgr, providerMonitor, core)
 
-	// 10.5 启动 3s 后后台检查更新（有新版本发事件给前端弹窗）
+	// 窗口聚焦时检查更新（长时间未操作后激活）
+	mainWindow.OnWindowEvent(events.Common.WindowFocus, func(event *application.WindowEvent) {
+		// 在独立 goroutine 中调用，避免阻塞事件循环
+		go checkUpdateOnActivation(updaterSvc)
+	})
 	go startUpdateCheck(updaterSvc)
 
 	// 更新完成后：释放端口 -> 以非托盘模式启动新进程 -> 退出旧进程
@@ -353,10 +357,10 @@ func quitApplication(app *application.App) {
 	}()
 }
 
-// startUpdateCheck 启动后延迟 3s 首次检查更新，之后每 6 小时周期检查。
-// 发现新版本时推送 update:available 事件给前端（前端按 critical 决定是否可忽略）。
+// startUpdateCheck 启动后延迟 3s 首次检查更新，之后每 2 小时周期检查。
+// 发现新版本时推送 update:available 事件给前端。
 func startUpdateCheck(updaterSvc *service.UpdaterService) {
-	ticker := time.NewTicker(6 * time.Hour)
+	ticker := time.NewTicker(2 * time.Hour)
 	defer ticker.Stop()
 
 	check := func() {
@@ -379,6 +383,34 @@ func startUpdateCheck(updaterSvc *service.UpdaterService) {
 	check()
 	for range ticker.C {
 		check()
+	}
+}
+
+// 上次激活检查的时间（跨进程边界，atomic 保证线程安全）
+var lastActivationCheck atomic.Int64
+
+// checkUpdateOnActivation 窗口激活时检查更新（防抖：至少间隔 5 分钟）
+func checkUpdateOnActivation(updaterSvc *service.UpdaterService) {
+	const minInterval = 5 * time.Minute
+	now := time.Now().UnixNano()
+	last := lastActivationCheck.Load()
+	if last > 0 && now-last < minInterval.Nanoseconds() {
+		return
+	}
+	lastActivationCheck.Store(now)
+
+	info, err := updaterSvc.CheckUpdate()
+	if err != nil {
+		log.Printf("⚠️ 激活检查更新失败: %v", err)
+		return
+	}
+	if info != nil {
+		kind := "普通更新"
+		if info.Critical {
+			kind = "强制更新"
+		}
+		log.Printf("发现新版本 %s（当前 %s，%s）", info.Version, updaterSvc.GetCurrentVersion(), kind)
+		updaterSvc.EmitUpdateAvailable(info)
 	}
 }
 

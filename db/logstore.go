@@ -246,6 +246,28 @@ func (d *DB) CountLogs() (int64, error) {
 	return count, err
 }
 
+// LogCountsByRange 按日期范围统计各状态日志数（重启后仍准确，不依赖内存计数器）
+func (d *DB) LogCountsByRange(startDate, endDate string) (map[string]int64, error) {
+	rows, err := d.conn.Query(
+		`SELECT status, COUNT(*) FROM logs WHERE date BETWEEN ? AND ? GROUP BY status`,
+		startDate, endDate,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int64{}
+	for rows.Next() {
+		var status string
+		var n int64
+		if err := rows.Scan(&status, &n); err != nil {
+			continue
+		}
+		counts[status] = n
+	}
+	return counts, nil
+}
+
 // ClearLogs 清空所有日志（不删关联表，保留 source/upstream/model 元数据）
 func (d *DB) ClearLogs() error {
 	_, err := d.conn.Exec(`DELETE FROM logs`)

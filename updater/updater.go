@@ -57,17 +57,30 @@ func (u *Updater) CheckUpdate(ctx context.Context) (*UpdateInfo, error) {
 		return nil, nil
 	}
 	// 自定义 URL 优先
+	var info *UpdateInfo
+	var err error
 	if uc.UpdateURL != "" {
-		return checkCustomURL(ctx, uc.UpdateURL, u.currentVer)
-	}
-	// GitHub
-	if uc.Provider == "github" || uc.Provider == "" {
+		info, err = checkCustomURL(ctx, uc.UpdateURL, u.currentVer)
+	} else if uc.Provider == "github" || uc.Provider == "" {
 		if uc.GitHub.Owner == "" || uc.GitHub.Repo == "" {
 			return nil, nil
 		}
-		return CheckGitHubRelease(uc.GitHub, u.currentVer)
+		info, err = CheckGitHubRelease(uc.GitHub, u.currentVer)
 	}
-	return nil, nil
+	if err != nil {
+		return nil, err
+	}
+	// 用户跳过的版本不提示
+	if info != nil && info.Version == u.cfg.AutoUpdate.SkippedVersion {
+		return nil, nil
+	}
+	return info, nil
+}
+
+// SetSkippedVersion 记录用户跳过的版本号，写入配置并持久化
+func (u *Updater) SetSkippedVersion(v string) error {
+	u.cfg.SetSkippedUpdateVersion(v)
+	return u.cfg.Save()
 }
 
 // ApplyUpdate 下载并应用更新（原子替换当前二进制）

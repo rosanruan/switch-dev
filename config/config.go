@@ -113,11 +113,12 @@ func copyUpstreams(src map[string]UpstreamSettings) map[string]UpstreamSettings 
 
 // UpdateConfig 自动升级配置
 type UpdateConfig struct {
-	Enabled   bool         `json:"enabled"`   // 是否启用自动升级检查
-	Provider  string       `json:"provider"`  // "github" | "custom"（默认 github）
-	GitHub    GitHubConfig `json:"github"`    // GitHub Releases 配置
-	UpdateURL string       `json:"updateUrl"` // 自定义检查地址（优先于 github）
-	Channel   string       `json:"channel"`   // "stable" | "beta"（默认 stable）
+	Enabled        bool         `json:"enabled"`        // 是否启用自动升级检查
+	Provider       string       `json:"provider"`       // "github" | "custom"（默认 github）
+	GitHub         GitHubConfig `json:"github"`         // GitHub Releases 配置
+	UpdateURL      string       `json:"updateUrl"`      // 自定义检查地址（优先于 github）
+	Channel        string       `json:"channel"`        // "stable" | "beta"（默认 stable）
+	SkippedVersion string       `json:"skippedVersion"` // 用户跳过的版本号，不再提示
 }
 
 // LogFileConfig 控制台日志落地到文件的配置
@@ -518,6 +519,13 @@ func (c *Config) GetAuthEnabled() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.AuthEnabled
+}
+
+// SetSkippedUpdateVersion 线程安全设置跳过的版本号
+func (c *Config) SetSkippedUpdateVersion(v string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.AutoUpdate.SkippedVersion = v
 }
 
 // IsUpstreamEnabled 判断上游是否启用（缺省/未配置视为启用，保证升级与新增供应商非破坏）

@@ -37,6 +37,11 @@ func (s *UpdaterService) CheckUpdate() (*updater.UpdateInfo, error) {
 	return s.updater.CheckUpdate(context.Background())
 }
 
+// SetSkippedVersion 记录用户跳过的版本号，该版本不再提示
+func (s *UpdaterService) SetSkippedVersion(version string) error {
+	return s.updater.SetSkippedVersion(version)
+}
+
 // ApplyUpdate 下载并应用更新（阻塞，进度通过事件推送）。
 // 二进制替换成功后：先推 done 事件让前端收尾，再由 main 注入的回调重启应用
 // （释放端口 -> 启动新进程 -> 退出旧进程）。

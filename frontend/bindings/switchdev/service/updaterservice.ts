@@ -46,6 +46,13 @@ export function GetCurrentVersion(): $CancellablePromise<string> {
     return $Call.ByID(2865083543);
 }
 
+/**
+ * SetSkippedVersion 记录用户跳过的版本号，该版本不再提示
+ */
+export function SetSkippedVersion(version: string): $CancellablePromise<void> {
+    return $Call.ByID(2585475084, version);
+}
+
 // Private type creation functions
 const $$createType0 = updater$0.UpdateInfo.createFrom;
 const $$createType1 = $Create.Nullable($$createType0);

@@ -166,7 +166,7 @@ export default function UpdatePanel() {
       ) : (
         <div className="flex items-center justify-between gap-4">
           <p className="text-xs text-[var(--color-text-dim)]">
-            启动时及每 6 小时自动检查 GitHub Releases，发现新版本会自动提示。更新会替换当前二进制。
+            启动时及每 2 小时自动检查 GitHub Releases，发现新版本会自动提示。更新会替换当前二进制。
           </p>
           <button
             onClick={check}

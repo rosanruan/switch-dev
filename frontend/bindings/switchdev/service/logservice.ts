@@ -38,7 +38,7 @@ export function GetLogDates(): $CancellablePromise<string[]> {
 }
 
 /**
- * GetLogStats 获取日志统计
+ * GetLogStats 获取日志统计（进程内累计，重启归零；仪表盘总览用）
  */
 export function GetLogStats(): $CancellablePromise<$models.LogStats | null> {
     return $Call.ByID(1185748336).then(($result: any) => {
@@ -101,6 +101,16 @@ export function GetUsageTrend(startDate: string, endDate: string, granularity: s
     });
 }
 
+/**
+ * LogCountsByRange 按日期范围统计各状态日志数（从数据库读取，重启后仍准确）
+ * 返回 total/success/error/authError/fallback 计数，供日志页筛选按钮显示。
+ */
+export function LogCountsByRange(startDate: string, endDate: string): $CancellablePromise<{ [_ in string]?: number }> {
+    return $Call.ByID(1465699747, startDate, endDate).then(($result: any) => {
+        return $$createType14($result);
+    });
+}
+
 // Private type creation functions
 const $$createType0 = $Create.Array($Create.Any);
 const $$createType1 = $models.LogStats.createFrom;
@@ -116,3 +126,4 @@ const $$createType10 = $models.UsageStats.createFrom;
 const $$createType11 = $Create.Nullable($$createType10);
 const $$createType12 = db$0.UsageTrend.createFrom;
 const $$createType13 = $Create.Nullable($$createType12);
+const $$createType14 = $Create.Map($Create.Any, $Create.Any);

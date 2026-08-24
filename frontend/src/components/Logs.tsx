@@ -1,12 +1,19 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { LogService } from "../../bindings/switchdev/service";
-import type { LogStats } from "../../bindings/switchdev/service/models";
 import type { LogEntry } from "../../bindings/switchdev/proxy/models";
 import ConfirmPopover from "./ConfirmPopover";
 
 interface Props {
   logs: LogEntry[]; // 内存实时日志（最新）
-  stats: LogStats | null;
+}
+
+// 各状态计数（按当前时间范围从数据库统计）
+interface StatusCounts {
+  total: number;
+  success: number;
+  error: number;
+  authError: number;
+  fallback: number;
 }
 
 type Range = "today" | "week" | "month";
@@ -27,13 +34,22 @@ function startOfWeek(d: Date): Date {
   return dateAddDays(d, 1 - day);
 }
 
-export default function Logs({ logs, stats }: Props) {
+export default function Logs({ logs }: Props) {
   const [range, setRange] = useState<Range>("today");
   const [filter, setFilter] = useState<Filter>("all");
   const [history, setHistory] = useState<LogEntry[]>([]);
   const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [counts, setCounts] = useState<StatusCounts>({
+    total: 0, success: 0, error: 0, authError: 0, fallback: 0,
+  });
   const [loading, setLoading] = useState(false);
+  // 已计入 DB 计数的实时日志 id（loadHistory 时用当前内存日志初始化）；
+  // 之后到达的新日志才实时累加，避免与 DB 统计重复计数。
+  const countedLiveRef = useRef<Set<string>>(new Set());
+  // 始终指向最新内存日志，供 loadHistory 初始化游标用（不进依赖，避免频繁重载）
+  const logsRef = useRef<LogEntry[]>(logs);
+  logsRef.current = logs;
 
   // 计算当前范围对应的日期区间
   const calcRange = useCallback((): { start: string; end: string } => {
@@ -49,15 +65,29 @@ export default function Logs({ logs, stats }: Props) {
     return { start: fmtDate(start), end: todayStr };
   }, [range]);
 
-  // 拉取历史日志（按范围）
+  // 拉取历史日志（按范围）+ 该范围内各状态计数
   const loadHistory = useCallback(async () => {
     setLoading(true);
     try {
       const { start, end } = calcRange();
-      const list = await LogService.GetLogsByRange(start, end, 500);
+      const [list, statusCounts, dates] = await Promise.all([
+        LogService.GetLogsByRange(start, end, 500),
+        LogService.LogCountsByRange(start, end),
+        LogService.GetLogDates(),
+      ]);
       setHistory((list ?? []).filter((l): l is LogEntry => l !== null));
-      const dates = await LogService.GetLogDates();
       setAvailableDates((dates ?? []).filter((d): d is string => d !== null));
+      const sc = statusCounts ?? {};
+      setCounts({
+        total: (sc["success"] ?? 0) + (sc["error"] ?? 0) + (sc["auth_error"] ?? 0) + (sc["fallback"] ?? 0),
+        success: sc["success"] ?? 0,
+        error: sc["error"] ?? 0,
+        authError: sc["auth_error"] ?? 0,
+        fallback: sc["fallback"] ?? 0,
+      });
+      // 当前内存里的实时日志（DB 查询时基本已落库）标记为"已计数"，
+      // 之后到达的新日志才在实时 effect 里累加，避免与 DB 统计重复。
+      countedLiveRef.current = new Set(logsRef.current.map((l) => l.id));
     } catch (e) {
       console.error("加载日志失败", e);
     } finally {
@@ -70,15 +100,30 @@ export default function Logs({ logs, stats }: Props) {
     loadHistory();
   }, [loadHistory, range]);
 
-  // 实时新日志（当前范围是今天时合并）
+  // 实时新日志（当前范围是今天时合并，并即时累加计数）
   useEffect(() => {
-    if (range === "today" && logs.length > 0) {
-      setHistory((prev) => {
-        const ids = new Set(prev.map((l) => l.id));
-        const fresh = logs.filter((l) => !ids.has(l.id));
-        return [...fresh, ...prev].slice(0, 500);
+    if (range !== "today" || logs.length === 0) return;
+    // 列表去重（DB 载入的行用数字 id，实时日志用 log-xxx id，不能据此判断是否已计数）
+    setHistory((prev) => {
+      const ids = new Set(prev.map((l) => l.id));
+      const fresh = logs.filter((l) => !ids.has(l.id));
+      return [...fresh, ...prev].slice(0, 500);
+    });
+    // 计数：只累加 loadHistory 之后新到达、尚未计过的日志
+    const counted = countedLiveRef.current;
+    const toCount = logs.filter((l) => !counted.has(l.id));
+    if (toCount.length === 0) return;
+    toCount.forEach((l) => counted.add(l.id));
+    setCounts((prev) => {
+      const next = { ...prev, total: prev.total + toCount.length };
+      toCount.forEach((l) => {
+        if (l.status === "success") next.success++;
+        else if (l.status === "error") next.error++;
+        else if (l.status === "auth_error") next.authError++;
+        else if (l.status === "fallback") next.fallback++;
       });
-    }
+      return next;
+    });
   }, [logs, range]);
 
   const filtered =
@@ -87,6 +132,7 @@ export default function Logs({ logs, stats }: Props) {
   const clear = async () => {
     await LogService.ClearLogs();
     setHistory([]);
+    setCounts({ total: 0, success: 0, error: 0, authError: 0, fallback: 0 });
   };
 
   return (
@@ -120,11 +166,11 @@ export default function Logs({ logs, stats }: Props) {
 
       {/* 状态筛选 + 统计 */}
       <div className="flex items-center gap-2 flex-wrap">
-        <FilterBtn label="全部" count={stats?.total ?? 0} active={filter === "all"} onClick={() => setFilter("all")} color="text-[var(--color-text)]" />
-        <FilterBtn label="成功" count={stats?.success ?? 0} active={filter === "success"} onClick={() => setFilter("success")} color="text-[var(--color-success)]" />
-        <FilterBtn label="错误" count={stats?.error ?? 0} active={filter === "error"} onClick={() => setFilter("error")} color="text-[var(--color-warning)]" />
-        <FilterBtn label="鉴权失败" count={stats?.authError ?? 0} active={filter === "auth_error"} onClick={() => setFilter("auth_error")} color="text-[var(--color-danger)]" />
-        <FilterBtn label="降级" count={0} active={filter === "fallback"} onClick={() => setFilter("fallback")} color="text-[var(--color-text-dim)]" />
+        <FilterBtn label="全部" count={counts.total} active={filter === "all"} onClick={() => setFilter("all")} color="text-[var(--color-text)]" />
+        <FilterBtn label="成功" count={counts.success} active={filter === "success"} onClick={() => setFilter("success")} color="text-[var(--color-success)]" />
+        <FilterBtn label="错误" count={counts.error} active={filter === "error"} onClick={() => setFilter("error")} color="text-[var(--color-warning)]" />
+        <FilterBtn label="鉴权失败" count={counts.authError} active={filter === "auth_error"} onClick={() => setFilter("auth_error")} color="text-[var(--color-danger)]" />
+        <FilterBtn label="降级" count={counts.fallback} active={filter === "fallback"} onClick={() => setFilter("fallback")} color="text-[var(--color-text-dim)]" />
       </div>
 
       {/* 日志列表 */}

@@ -529,6 +529,11 @@ export class UpdateConfig {
      */
     "channel": string;
 
+    /**
+     * 用户跳过的版本号，不再提示
+     */
+    "skippedVersion": string;
+
     /** Creates a new UpdateConfig instance. */
     constructor($$source: Partial<UpdateConfig> = {}) {
         if (!("enabled" in $$source)) {
@@ -545,6 +550,9 @@ export class UpdateConfig {
         }
         if (!("channel" in $$source)) {
             this["channel"] = "";
+        }
+        if (!("skippedVersion" in $$source)) {
+            this["skippedVersion"] = "";
         }
 
         Object.assign(this, $$source);
