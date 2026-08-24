@@ -43,14 +43,14 @@ type UARule struct {
 // 只含降级链相关字段，不含 port/apiKey/update —— 那些是环境配置，
 // 不应随方案切换而变（apiKey 变了会让已接入的客户端 401）
 type Preset struct {
-	Name              string                      `json:"name"`
-	Mode              string                      `json:"mode"`
-	AutoChain         []AgentModels               `json:"autoChain"`
-	ManualFallbacks   map[string][]proxy.ModelRef `json:"manualFallbacks"`
-	GlobalFallback    proxy.ModelRef              `json:"globalFallback"`
-	UARoutingEnabled  bool                        `json:"uaRoutingEnabled"`
-	UARules           []UARule                    `json:"uaRules"`
-	UAGlobalFallback  proxy.ModelRef              `json:"uaGlobalFallback"`
+	Name             string                      `json:"name"`
+	Mode             string                      `json:"mode"`
+	AutoChain        []AgentModels               `json:"autoChain"`
+	ManualFallbacks  map[string][]proxy.ModelRef `json:"manualFallbacks"`
+	GlobalFallback   proxy.ModelRef              `json:"globalFallback"`
+	UARoutingEnabled bool                        `json:"uaRoutingEnabled"`
+	UARules          []UARule                    `json:"uaRules"`
+	UAGlobalFallback proxy.ModelRef              `json:"uaGlobalFallback"`
 }
 
 // ModelRef 复用 proxy.ModelRef，避免类型不一致
@@ -113,11 +113,11 @@ func copyUpstreams(src map[string]UpstreamSettings) map[string]UpstreamSettings 
 
 // UpdateConfig 自动升级配置
 type UpdateConfig struct {
-	Enabled   bool        `json:"enabled"`             // 是否启用自动升级检查
-	Provider  string      `json:"provider"`            // "github" | "custom"（默认 github）
-	GitHub    GitHubConfig `json:"github"`             // GitHub Releases 配置
-	UpdateURL string      `json:"updateUrl"`           // 自定义检查地址（优先于 github）
-	Channel   string      `json:"channel"`             // "stable" | "beta"（默认 stable）
+	Enabled   bool         `json:"enabled"`   // 是否启用自动升级检查
+	Provider  string       `json:"provider"`  // "github" | "custom"（默认 github）
+	GitHub    GitHubConfig `json:"github"`    // GitHub Releases 配置
+	UpdateURL string       `json:"updateUrl"` // 自定义检查地址（优先于 github）
+	Channel   string       `json:"channel"`   // "stable" | "beta"（默认 stable）
 }
 
 // LogFileConfig 控制台日志落地到文件的配置
@@ -140,22 +140,22 @@ type UpstreamSettings struct {
 
 // Config 代理运行配置
 type Config struct {
-	Mode              string                      `json:"mode"`              // "auto" | "manual" | "ua"
-	AutoChain         []AgentModels               `json:"autoChain"`         // auto 模式优先级链
-	ManualFallbacks   map[string][]proxy.ModelRef `json:"manualFallbacks"`   // 手动模式下模型的降级链
-	GlobalFallback    proxy.ModelRef              `json:"globalFallback"`    // auto/manual 全局兜底
-	UARoutingEnabled  bool                        `json:"uaRoutingEnabled"`  // auto/manual 模式下 UA 叠加层开关
-	UARules           []UARule                    `json:"uaRules"`           // UA 路由规则
-	UAGlobalFallback  proxy.ModelRef              `json:"uaGlobalFallback"`  // ua 模式全局兜底
-	Port              int                         `json:"port"`              // 代理监听端口
-	APIKey            string                      `json:"apiKey"`            // 客户端接入密钥（AuthEnabled=true 时严格校验）
-	AuthEnabled       bool                        `json:"authEnabled"`       // 是否要求客户端携带 apiKey；默认 true，关闭后网关不鉴权
-	AutoStart         bool                        `json:"autoStart"`         // 登录系统时自动启动（静默到托盘，以 --tray 启动）
-	AutoUpdate       UpdateConfig                `json:"update"`           // 自动升级配置
-	LogFile          LogFileConfig               `json:"logFile"`          // 控制台日志落地文件配置
-	Presets          []Preset                    `json:"presets"`          // 已保存的运行模式方案
-	ActivePreset     string                      `json:"activePreset"`     // 当前激活方案名（仅 UI 提示；偏离后置空 = 自定义）
-	Provider         ProviderSettings            `json:"provider"`         // 供应商配置相关偏好
+	Mode             string                      `json:"mode"`                // "auto" | "manual" | "ua"
+	AutoChain        []AgentModels               `json:"autoChain"`           // auto 模式优先级链
+	ManualFallbacks  map[string][]proxy.ModelRef `json:"manualFallbacks"`     // 手动模式下模型的降级链
+	GlobalFallback   proxy.ModelRef              `json:"globalFallback"`      // auto/manual 全局兜底
+	UARoutingEnabled bool                        `json:"uaRoutingEnabled"`    // auto/manual 模式下 UA 叠加层开关
+	UARules          []UARule                    `json:"uaRules"`             // UA 路由规则
+	UAGlobalFallback proxy.ModelRef              `json:"uaGlobalFallback"`    // ua 模式全局兜底
+	Port             int                         `json:"port"`                // 代理监听端口
+	APIKey           string                      `json:"apiKey"`              // 客户端接入密钥（AuthEnabled=true 时严格校验）
+	AuthEnabled      bool                        `json:"authEnabled"`         // 是否要求客户端携带 apiKey；默认 true，关闭后网关不鉴权
+	AutoStart        bool                        `json:"autoStart"`           // 登录系统时自动启动（静默到托盘，以 --tray 启动）
+	AutoUpdate       UpdateConfig                `json:"update"`              // 自动升级配置
+	LogFile          LogFileConfig               `json:"logFile"`             // 控制台日志落地文件配置
+	Presets          []Preset                    `json:"presets"`             // 已保存的运行模式方案
+	ActivePreset     string                      `json:"activePreset"`        // 当前激活方案名（仅 UI 提示；偏离后置空 = 自定义）
+	Provider         ProviderSettings            `json:"provider"`            // 供应商配置相关偏好
 	Upstreams        map[string]UpstreamSettings `json:"upstreams,omitempty"` // 各上游启用开关（key=upstream/provider id，缺省视为启用）
 
 	mu   sync.RWMutex `json:"-"`
@@ -270,11 +270,19 @@ func Load(path string) (*Config, error) {
 	}
 
 	if err := c.Validate(); err != nil {
+		// 配置校验失败：除降级链等字段回退默认外，尽量沿用旧 apiKey，
+		// 避免一次坏字段（如某条 UA 规则 upstream 无效）把所有已接入客户端静默打成 401。
+		// 此处能走到说明 JSON 已成功解析、APIKey 已补全（上方 keyGenerated），旧 key 可用。
+		oldAPIKey := c.APIKey
 		*c = *Defaults()
 		c.path = path
-		c.APIKey = generateAPIKey()
+		if strings.TrimSpace(oldAPIKey) != "" {
+			c.APIKey = oldAPIKey
+		} else {
+			c.APIKey = generateAPIKey()
+		}
 		c.Save()
-		return c, fmt.Errorf("配置校验失败，已重置为默认: %w", err)
+		return c, fmt.Errorf("配置校验失败，已重置为默认（保留原 apiKey）: %w", err)
 	}
 
 	// 补全的字段需持久化（升级用户首次启动）

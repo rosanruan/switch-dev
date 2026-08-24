@@ -103,16 +103,7 @@ Switch Dev 只搬运你已有的登录态，**不代注册、不代登录**。�
   }
 }
 ```
-
-**Codex**（`~/.codex/config.toml`）：
-```toml
-model = "auto"
-model_provider = "switchdev"
-[model_providers.switchdev]
-base_url = "http://127.0.0.1:8787/v1"
-wire_api = "chat"
-```
-
+·
 **cc-switch**：baseURL `http://127.0.0.1:8787`，apiKey 任意，模型 `auto`。
 
 > `auto` 按你配置的优先级链自动选模型；也可指定具体模型（如 `glm-5.1`、`wb/hy3`）。

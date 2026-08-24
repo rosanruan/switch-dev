@@ -18,13 +18,13 @@ type HealthReporter interface {
 // Monitor 免费模型健康监控（每 5 分钟探测所有 verified 模型）
 // 只监控 providerapi 的模型，不影响内置 4 上游
 type Monitor struct {
-	mgr         *Manager
-	client      *http.Client
-	reporter    HealthReporter
-	threshold   int // 连续失败阈值
-	onHealth    func(providerID, modelID string, healthy bool)
-	closeCh     chan struct{}
-	closeOnce   sync.Once
+	mgr       *Manager
+	client    *http.Client
+	reporter  HealthReporter
+	threshold int // 连续失败阈值
+	onHealth  func(providerID, modelID string, healthy bool)
+	closeCh   chan struct{}
+	closeOnce sync.Once
 }
 
 // NewMonitor 创建监控器
@@ -124,7 +124,8 @@ func (m *Monitor) runOnce(ctx context.Context) {
 }
 
 // probe 对单个模型发轻量探测请求
-// 用 max_tokens=1 的最小 chat 请求验证模型可用
+// 用 max_tokens=1 的最小请求验证模型可用；按供应商协议选择端点与鉴权头
+// （anthropic 走 /v1/messages + x-api-key，openai 走 /chat/completions + Bearer）。
 func (m *Monitor) probe(ctx context.Context, p *ProviderConfig, modelID string) bool {
 	payload := map[string]any{
 		"model":      modelID,
@@ -136,14 +137,27 @@ func (m *Monitor) probe(ctx context.Context, p *ProviderConfig, modelID string) 
 	if err != nil {
 		return false
 	}
-	url := trimSlash(p.BaseURL) + "/chat/completions"
+
+	proto := p.EffectiveProtocol()
+	var url string
+	if proto == ProtocolAnthropic {
+		url = trimSlash(p.BaseURL) + "/v1/messages"
+	} else {
+		url = trimSlash(p.BaseURL) + "/chat/completions"
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	req.Header.Set("Accept", "application/json")
+	if proto == ProtocolAnthropic {
+		req.Header.Set("x-api-key", p.APIKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	} else {
+		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
 
 	resp, err := m.client.Do(req)
 	if err != nil {

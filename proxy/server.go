@@ -186,7 +186,7 @@ func (s *Server) handleDispatch(w http.ResponseWriter, r *http.Request) {
 	// 鉴权：除健康检查外，校验客户端 apiKey（用户关闭鉴权时放行）
 	if r.URL.Path != "/" && r.URL.Path != "/health" {
 		if s.ConfigResolver.GetAuthEnabled() && !s.checkAPIKey(r) {
-			s.writeAuthError(w, r)
+			s.handleAuthFailure(w, r)
 			return
 		}
 	}
@@ -232,14 +232,50 @@ func (s *Server) checkAPIKey(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(clientKey), []byte(expected)) == 1
 }
 
-// writeAuthError 写 401 鉴权失败响应（按请求路径匹配 Anthropic/OpenAI 格式）
-func (s *Server) writeAuthError(w http.ResponseWriter, r *http.Request) {
-	msg := "invalid api key"
+// handleAuthFailure 处理网关入站鉴权失败：记一条可观测日志（含 UA + 脱敏后的收到 key），
+// 再返回可操作文案——明确提示「应填 Switch Dev 的 rs- 接入密钥，而非第三方供应商 Key」。
+// 注意：这是网关自己的鉴权（校验 Claude Code/Codex 等客户端带进来的 key），与上游供应商的 401 无关。
+func (s *Server) handleAuthFailure(w http.ResponseWriter, r *http.Request) {
+	received := receivedClientKey(r)
+	// 记日志：reason 固定，便于在日志页/SQLite 里筛出「客户端 key 不匹配」类问题。
+	s.recordLog(&LogEntry{
+		Status:   "auth_error",
+		Code:     http.StatusUnauthorized,
+		Source:   sourceFromUA(r.Header.Get("User-Agent")),
+		Upstream: "gateway",
+		Method:   r.Method,
+		Path:     r.URL.Path,
+		ErrorMsg: fmt.Sprintf("网关鉴权失败：客户端 key 不匹配（收到 %s）。请把 ANTHROPIC_API_KEY 设为 Switch Dev「设置 → 接入 apiKey」里的 rs- 密钥，而不是第三方供应商 Key；如在设置页重新生成过 apiKey，客户端需同步更新", maskKeyForLog(received)),
+	})
+	msg := "invalid api key: 请把客户端（如 ANTHROPIC_API_KEY）设为 Switch Dev「设置 → 接入 apiKey」显示的 rs- 密钥，而不是第三方供应商 Key；网关本身未联系上游"
 	if strings.HasPrefix(r.URL.Path, "/v1/chat/completions") {
 		writeOpenAIError(w, http.StatusUnauthorized, msg)
 		return
 	}
 	writeAnthropicError(w, http.StatusUnauthorized, "authentication_error", msg)
+}
+
+// receivedClientKey 从请求里取出客户端带来的 key（x-api-key 优先，其次 Authorization: Bearer）。
+func receivedClientKey(r *http.Request) string {
+	if k := r.Header.Get("x-api-key"); k != "" {
+		return k
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	return ""
+}
+
+// maskKeyForLog 脱敏收到的 key：保留前 4 位 + 标注长度，不写明文。
+// 空 key 单独标注，便于区分「没带 key」和「带错 key」。
+func maskKeyForLog(k string) string {
+	if k == "" {
+		return "<empty>"
+	}
+	if len(k) <= 4 {
+		return fmt.Sprintf("****(len=%d)", len(k))
+	}
+	return fmt.Sprintf("%s****(len=%d)", k[:4], len(k))
 }
 
 // handleHealth 健康检查（显示三上游凭据状态）
