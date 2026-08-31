@@ -310,9 +310,65 @@ func StreamOpenAIToAnthropic(w io.Writer, r io.Reader, model string) (*OpenAIUsa
 			capturedUsage = chunk.Usage
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return capturedUsage, firstByteMs, model, fmt.Errorf("读取 SSE 流失败: %w", err)
-	}
+		if err := scanner.Err(); err != nil {
+			// 上游连接中断：如果已发了 message_start，必须补发 message_delta + message_stop，
+			// 否则客户端拿到的 Message 缺 stop_reason → Anthropic SDK 校验失败 → "empty or malformed response"
+			if messageStarted && !finishedNormal {
+				for tcIdx, p := range pendingToolStart {
+					if p == nil {
+						continue
+					}
+					if p.id == "" {
+						p.id = fmt.Sprintf("toolu_%d", tcIdx)
+					}
+					if p.name == "" {
+						p.name = "unknown"
+					}
+					writeEvent("content_block_start", map[string]interface{}{
+						"type": "content_block_start", "index": p.anthropicIdx,
+						"content_block": map[string]interface{}{"type": "tool_use", "id": p.id, "name": p.name, "input": map[string]interface{}{}},
+					})
+					if p.bufferedArgs.Len() > 0 {
+						writeEvent("content_block_delta", map[string]interface{}{
+							"type": "content_block_delta", "index": p.anthropicIdx,
+							"delta": map[string]interface{}{"type": "input_json_delta", "partial_json": p.bufferedArgs.String()},
+						})
+					}
+				}
+				for _, idx := range blockOpenOrder {
+					writeEvent("content_block_stop", map[string]interface{}{
+						"type": "content_block_stop", "index": idx,
+					})
+				}
+				fr := finishReason
+				if fr == "" {
+					fr = "end_turn"
+				}
+				outputTokens := 0
+				if capturedUsage != nil {
+					outputTokens = capturedUsage.CompletionTokens
+				}
+				if outputTokens <= 0 && outputRunes > 0 {
+					outputTokens = estimateOutputTokens(outputRunes)
+				}
+				usageOut := map[string]interface{}{"output_tokens": outputTokens}
+				if capturedUsage != nil && capturedUsage.PromptTokens > 0 {
+					usageOut["input_tokens"] = capturedUsage.PromptTokens
+				}
+				writeEvent("message_delta", map[string]interface{}{
+					"type": "message_delta",
+					"delta": map[string]interface{}{
+						"stop_reason":   fr,
+						"stop_sequence": nil,
+					},
+					"usage": usageOut,
+				})
+				writeEvent("message_stop", map[string]interface{}{
+					"type": "message_stop",
+				})
+			}
+			return capturedUsage, firstByteMs, model, fmt.Errorf("读取 SSE 流失败: %w", err)
+		}
 	// 没发 message_start 但有 data 行 -> 上游返回了非标准 SSE（如错误 data），记录前几行便于排查
 	if firstByteMs == 0 && len(firstDataLines) > 0 {
 		snippet := strings.Join(firstDataLines, " | ")

@@ -21,23 +21,25 @@ import (
 //
 // 与内置 4 上游平级，可进降级链。
 type ProviderAPIUpstream struct {
-	name        string // provider id（如 "groq"、"custom-xxx"）
-	displayName string // 供应商显示名（如 "Groq"）
-	getBaseURL  func() string
-	getAPIKey   func() string
-	getProtocol func() string // 返回 "openai"（默认）或 "anthropic"
-	client      *http.Client
+	name         string // provider id（如 "groq"、"custom-xxx"）
+	displayName  string // 供应商显示名（如 "Groq"）
+	getBaseURL   func() string
+	getAPIKey    func() string
+	getProtocol  func() string // 返回 "openai"（默认）或 "anthropic"
+	client       *http.Client
+	streamClient *http.Client // 流式专用：无整体 Timeout，由 context 控制超时
 }
 
 // NewProviderAPIUpstream 创建免费 API 上游
 // providerID 用于路由标识；getBaseURL/getAPIKey/getProtocol 返回当前绑定的 provider 配置
 func NewProviderAPIUpstream(providerID string, getBaseURL, getAPIKey, getProtocol func() string) *ProviderAPIUpstream {
 	return &ProviderAPIUpstream{
-		name:        providerID,
-		getBaseURL:  getBaseURL,
-		getAPIKey:   getAPIKey,
-		getProtocol: getProtocol,
-		client:      &http.Client{Timeout: 120 * time.Second},
+		name:         providerID,
+		getBaseURL:   getBaseURL,
+		getAPIKey:    getAPIKey,
+		getProtocol:  getProtocol,
+		client:       &http.Client{Timeout: 120 * time.Second},
+		streamClient: &http.Client{}, // 无 Timeout：流式由 context 控制
 	}
 }
 
@@ -231,7 +233,7 @@ func (u *ProviderAPIUpstream) doCallStream(ctx context.Context, body []byte, key
 	req.Header.Set("Accept", "text/event-stream")
 	u.setAuth(req, key)
 
-	httpResp, err := u.client.Do(req)
+	httpResp, err := u.streamClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

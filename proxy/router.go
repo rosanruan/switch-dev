@@ -20,8 +20,8 @@ type ModelRef struct {
 	Model    string `json:"model"`
 }
 
-// chainTimeout 降级链总超时（包含所有上游尝试；防串行累加超过客户端超时）
-const chainTimeout = 180 * time.Second
+// chainTimeout 降级链总超时（包含所有上游尝试；长上下文推理可能数分钟，需留足余量）
+const chainTimeout = 600 * time.Second
 
 // directCtxKey 直连模式上下文 key：测评等内部请求用，跳过降级链，只打指定模型
 type directCtxKey struct{}

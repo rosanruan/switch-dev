@@ -101,7 +101,7 @@ func (s *Server) Start() error {
 		Handler:           mux,
 		ReadTimeout:       30 * time.Second, // 读取请求体（含长上下文）的上限
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      300 * time.Second, // 流式推理可能很慢，5 分钟
+		WriteTimeout:      0, // 禁用：SSE 流式响应可能持续数分钟，Go 的 WriteTimeout 会强杀长连接导致客户端收到截断响应
 		IdleTimeout:       120 * time.Second,
 	}
 

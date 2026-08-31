@@ -15,16 +15,16 @@ import (
 // WorkBuddyUpstream 腾讯 CodeBuddy(WorkBuddy) 适配器
 // 上游强制 stream:true，Call 内部聚合 SSE 成完整 JSON 返回，对上层透明
 type WorkBuddyUpstream struct {
-	mgr    *creds.WorkBuddyCredManager
-	client *http.Client
+	mgr          *creds.WorkBuddyCredManager
+	client       *http.Client
+	streamClient *http.Client // 流式专用：无整体 Timeout（WorkBuddy Call 内部也走流式聚合）
 }
 
 func NewWorkBuddyUpstream(mgr *creds.WorkBuddyCredManager) *WorkBuddyUpstream {
 	return &WorkBuddyUpstream{
-		mgr: mgr,
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		mgr:          mgr,
+		client:       &http.Client{Timeout: 120 * time.Second},
+		streamClient: &http.Client{}, // 无 Timeout：WorkBuddy 强制流式，聚合可能持续数分钟
 	}
 }
 
@@ -137,7 +137,7 @@ func (u *WorkBuddyUpstream) doCall(ctx context.Context, body []byte, cred *creds
 	}
 	// 不设 Accept-Encoding，让 Go http.Client 自动透明解压 gzip
 
-	httpResp, err := u.client.Do(req)
+	httpResp, err := u.streamClient.Do(req) // WorkBuddy 强制流式，用无 Timeout 的 client
 	if err != nil {
 		return nil, err
 	}

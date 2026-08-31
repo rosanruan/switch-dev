@@ -16,16 +16,16 @@ import (
 
 // OpenCodeUpstream OpenCode Zen 适配器
 type OpenCodeUpstream struct {
-	mgr    *creds.OpenCodeCredManager
-	client *http.Client
+	mgr          *creds.OpenCodeCredManager
+	client       *http.Client
+	streamClient *http.Client // 流式专用：无整体 Timeout，由 context 控制超时
 }
 
 func NewOpenCodeUpstream(mgr *creds.OpenCodeCredManager) *OpenCodeUpstream {
 	return &OpenCodeUpstream{
-		mgr: mgr,
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		mgr:          mgr,
+		client:       &http.Client{Timeout: 120 * time.Second},
+		streamClient: &http.Client{}, // 无 Timeout：流式由 context 控制
 	}
 }
 
@@ -210,7 +210,7 @@ func (u *OpenCodeUpstream) doCallStream(ctx context.Context, body []byte, cred *
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cred.APIKey))
 	req.Header.Set("Accept", "text/event-stream")
 
-	httpResp, err := u.client.Do(req)
+	httpResp, err := u.streamClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

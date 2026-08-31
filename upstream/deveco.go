@@ -18,16 +18,16 @@ import (
 
 // DevEcoUpstream DevEco Code 华为 MaaS 网关适配器
 type DevEcoUpstream struct {
-	mgr    *creds.DevEcoCredManager
-	client *http.Client
+	mgr          *creds.DevEcoCredManager
+	client       *http.Client
+	streamClient *http.Client // 流式专用：无整体 Timeout，由 context 控制超时
 }
 
 func NewDevEcoUpstream(mgr *creds.DevEcoCredManager) *DevEcoUpstream {
 	return &DevEcoUpstream{
-		mgr: mgr,
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		mgr:          mgr,
+		client:       &http.Client{Timeout: 120 * time.Second},
+		streamClient: &http.Client{}, // 无 Timeout：流式由 context 控制
 	}
 }
 
@@ -266,7 +266,7 @@ func (u *DevEcoUpstream) doCallStream(ctx context.Context, body []byte, cred *cr
 	req.Header.Set("lang", "en")
 	req.Header.Set("Accept", "text/event-stream")
 
-	httpResp, err := u.client.Do(req)
+	httpResp, err := u.streamClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

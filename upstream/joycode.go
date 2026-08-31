@@ -17,16 +17,18 @@ import (
 
 // JoyCodeUpstream JoyCode Color 网关适配器
 type JoyCodeUpstream struct {
-	mgr    *creds.JoyCodeCredManager
-	client *http.Client
+	mgr          *creds.JoyCodeCredManager
+	client       *http.Client
+	streamClient *http.Client // 流式专用：无整体 Timeout，由 context 控制超时
 }
 
 func NewJoyCodeUpstream(mgr *creds.JoyCodeCredManager) *JoyCodeUpstream {
 	return &JoyCodeUpstream{
-		mgr: mgr,
+		mgr:    mgr,
 		client: &http.Client{
-			Timeout: 120 * time.Second, // 模型推理可能慢
+			Timeout: 120 * time.Second, // 非流式：模型推理可能慢
 		},
+		streamClient: &http.Client{}, // 无 Timeout：流式可能持续数分钟，由 context 控制
 	}
 }
 
@@ -306,7 +308,7 @@ func (u *JoyCodeUpstream) doCallStream(ctx context.Context, body []byte, cred *c
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Encoding", "gzip")
 
-	httpResp, err := u.client.Do(req)
+	httpResp, err := u.streamClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -366,8 +368,6 @@ func (u *JoyCodeUpstream) doCallStream(ctx context.Context, body []byte, cred *c
 			snippet = snippet[:200]
 		}
 		fmt.Printf("[switch-dev] joycode 流式上游返回非 SSE 内容，回退非流式: %s\n", snippet)
-		// 非流式 Call 发 stream:false，网关可能正常返回 JSON；虚拟 406 让 executeChainStream
-		// 跳过剩余流式上游、让 handler 回退到 Call + 伪流式拆分。
 		return &StreamResponse{
 			StatusCode: 406,
 			Body:       io.NopCloser(bytes.NewReader(peeked)),

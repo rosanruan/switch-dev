@@ -257,7 +257,7 @@ export default function ProviderAPI() {
       }
       const m = targets.find((x) => x.id === mid);
       if (m) {
-        const ok = await persistVerifiedModel(m, batchResRef.current[mid]?.tps ?? 0);
+        const ok = await persistVerifiedModel(m, batchResRef.current[mid]?.tps ?? 0, pid);
         if (ok) autoAdded.push(mid);
       }
     }
@@ -442,7 +442,7 @@ export default function ProviderAPI() {
         } else {
           // 测评通过且尚未加入 -> 自动加入（新增/编辑模式都生效；
           // 之前用 !editingId 判断导致编辑模式下重测的新模型永远不会被加入）
-          const added = await persistVerifiedModel(model, res.tps ?? 0);
+          const added = await persistVerifiedModel(model, res.tps ?? 0, pid);
           if (added) {
             await load();
             flash("ok", `模型 ${model.id} 测评通过，已自动加入`);
@@ -517,8 +517,8 @@ export default function ProviderAPI() {
 
   // 批量加入：把所有评测通过（benchResult.success）且尚未加入的模型一次性加入
   const batchAddPassed = async () => {
-    const eid0 = getEffectiveId();
-    const existing0 = eid0 ? providers[eid0] : undefined;
+    const providerId = getEffectiveId();
+    const existing0 = providerId ? providers[providerId] : undefined;
     if (!baseURL.trim() || (!apiKey.trim() && !existing0?.hasKey)) {
       flash("err", "请先填写 BaseURL 和 API Key");
       return;
@@ -533,7 +533,6 @@ export default function ProviderAPI() {
       flash("err", "没有可加入的测评通过模型");
       return;
     }
-    const providerId = getEffectiveId();
     const catName = fromCatalog
       ? catalog?.providers.find((x) => x.id === selectedCatalog)?.name
       : undefined;
@@ -583,8 +582,9 @@ export default function ProviderAPI() {
 
   // 持久化一个已通过测评的模型：供应商不存在则先按表单创建，再 AddVerifiedModel。
   // 静默执行（不弹提示、不刷新列表），由调用方统一 flash/load。返回是否真正加入。
-  const persistVerifiedModel = async (model: CatalogModel, tps: number): Promise<boolean> => {
-    const providerId = getEffectiveId();
+  // forceProviderId 可选：批量操作时传入已捕获的 provider id，避免重复生成随机 id 导致多个供应商。
+  const persistVerifiedModel = async (model: CatalogModel, tps: number, forceProviderId?: string): Promise<boolean> => {
+    const providerId = forceProviderId || getEffectiveId();
     const existingForCheck = providers[providerId];
     if (!baseURL.trim() || (!apiKey.trim() && !existingForCheck?.hasKey)) {
       return false;
