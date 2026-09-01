@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=switch-dev
+Exec=switch-dev
+Icon=switch-dev
+Categories=Development;
+Terminal=false
+Keywords=wails
+Version=1.0
+StartupNotify=false

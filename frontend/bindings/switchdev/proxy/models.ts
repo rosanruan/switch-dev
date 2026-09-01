@@ -64,12 +64,12 @@ export class LogEntry {
     "stream"?: boolean;
 
     /**
-     * 请求体（截断 4KB）
+     * 请求体
      */
     "requestBody"?: string;
 
     /**
-     * 响应体（截断 4KB）
+     * 响应体
      */
     "responseBody"?: string;
 

@@ -168,8 +168,8 @@ type LogEntry struct {
 	Method       string `json:"method,omitempty"`       // "POST"
 	Path         string `json:"path,omitempty"`         // "/v1/messages"
 	Stream       bool   `json:"stream,omitempty"`       // 是否流式请求
-	RequestBody  string `json:"requestBody,omitempty"`  // 请求体（截断 4KB）
-	ResponseBody string `json:"responseBody,omitempty"` // 响应体（截断 4KB）
+	RequestBody  string `json:"requestBody,omitempty"`  // 请求体
+	ResponseBody string `json:"responseBody,omitempty"` // 响应体
 
 	// 用量/费用字段
 	InputTokens    int     `json:"inputTokens,omitempty"`    // 输入 token

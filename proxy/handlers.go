@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"switchdev/creds"
+	"switchdev/pricing"
 	"switchdev/upstream"
 )
 
@@ -48,18 +50,35 @@ func setSource(entry *LogEntry, r *http.Request) {
 	}
 }
 
-// 请求/响应体记录上限（防日志膨胀）
-const maxLogBodySize = 4096
-
 // 入站请求体上限（50MB，防 OOM；长上下文 Claude Code 请求通常 < 10MB）
 const maxRequestBodySize = 50 << 20
 
-// truncateBody 截断请求/响应体到上限，超出加省略号
-func truncateBody(s string) string {
-	if len(s) > maxLogBodySize {
-		return s[:maxLogBodySize] + "...(truncated)"
+// maxStreamCapture 流式响应体捕获上限（64KB，仅日志用，避免内存膨胀）
+const maxStreamCapture = 64 << 10
+
+// captureStreamBody 包装 io.Reader，在读取时同时捕获前 maxStreamCapture 字节到 buf
+func captureStreamBody(r io.Reader) (io.Reader, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return io.TeeReader(r, &limitedWriter{w: &buf, n: maxStreamCapture}), &buf
+}
+
+// limitedWriter 最多写入 n 字节，超出后静默丢弃
+type limitedWriter struct {
+	w io.Writer
+	n int
+}
+
+func (l *limitedWriter) Write(p []byte) (int, error) {
+	if l.n <= 0 {
+		return len(p), nil
 	}
-	return s
+	if len(p) > l.n {
+		l.w.Write(p[:l.n])
+		l.n = 0
+		return len(p), nil
+	}
+	l.n -= len(p)
+	return l.w.Write(p)
 }
 
 // makeLogEntry 构造日志条目（公共字段）
@@ -74,8 +93,8 @@ func (s *Server) makeLogEntry(model, up, status string, code int, duration int64
 		Method:       method,
 		Path:         path,
 		Stream:       stream,
-		RequestBody:  truncateBody(reqBody),
-		ResponseBody: truncateBody(respBody),
+		RequestBody:  reqBody,
+		ResponseBody: respBody,
 	}
 }
 
@@ -111,15 +130,21 @@ func (s *Server) enrichUsage(entry *LogEntry, respBody []byte, requestedModel st
 	}
 
 	// 计算费用（用自有费率库）
-	// 优先用 resolve 后的请求模型（auto -> glm-5.1，Kimi-K2.6-agent -> 归一化匹配 kimi-k2.6）
-	// 查不到再用真实模型（费率表可能是标准名）
+	// 优先用 usedModel（降级链实际命中的模型，最可靠的费率查找键）
+	// 其次用 resolve 后的请求模型，最后用真实模型（费率表可能是标准名）
 	if s.Pricing != nil {
-		lookupModel := ResolveModel(requestedModel)
-		cost, price := s.Pricing.CalculateCost(lookupModel, entry.InputTokens, entry.OutputTokens)
-		if price == nil && entry.RealModel != "" && entry.RealModel != lookupModel {
-			cost2, price2 := s.Pricing.CalculateCost(entry.RealModel, entry.InputTokens, entry.OutputTokens)
-			if price2 != nil {
-				cost, price = cost2, price2
+		cost, price := 0.0, (*pricing.Price)(nil)
+		if entry.UsedModel != "" {
+			cost, price = s.Pricing.CalculateCost(ActualUpstreamModel(entry.UsedModel), entry.InputTokens, entry.OutputTokens)
+		}
+		if price == nil {
+			lookupModel := ResolveModel(requestedModel)
+			cost, price = s.Pricing.CalculateCost(lookupModel, entry.InputTokens, entry.OutputTokens)
+			if price == nil && entry.RealModel != "" && entry.RealModel != lookupModel {
+				cost2, price2 := s.Pricing.CalculateCost(entry.RealModel, entry.InputTokens, entry.OutputTokens)
+				if price2 != nil {
+					cost, price = cost2, price2
+				}
 			}
 		}
 		if price != nil {
@@ -496,8 +521,20 @@ func (s *Server) fillStreamLog(entry *LogEntry, usage *OpenAIUsage, requestedMod
 		}
 	}
 	if s.Pricing != nil {
-		lookupModel := ResolveModel(requestedModel)
-		cost, price := s.Pricing.CalculateCost(lookupModel, entry.InputTokens, entry.OutputTokens)
+		cost, price := 0.0, (*pricing.Price)(nil)
+		if entry.UsedModel != "" {
+			cost, price = s.Pricing.CalculateCost(ActualUpstreamModel(entry.UsedModel), entry.InputTokens, entry.OutputTokens)
+		}
+		if price == nil {
+			lookupModel := ResolveModel(requestedModel)
+			cost, price = s.Pricing.CalculateCost(lookupModel, entry.InputTokens, entry.OutputTokens)
+		}
+		if price == nil && entry.RealModel != "" {
+			cost2, price2 := s.Pricing.CalculateCost(entry.RealModel, entry.InputTokens, entry.OutputTokens)
+			if price2 != nil {
+				cost, price = cost2, price2
+			}
+		}
 		if price != nil {
 			entry.Cost = cost
 			entry.CostText = fmt.Sprintf("%s", price.DisplayName)
@@ -511,12 +548,14 @@ func (s *Server) streamAnthropicPassthrough(w http.ResponseWriter, sr *upstream.
 	start := time.Now()
 	setSSEHeaders(w)
 
-	usage, firstByteMs, _ := StreamAnthropicPassthrough(w, sr.Body)
+	streamR, respBuf := captureStreamBody(sr.Body)
+	usage, firstByteMs, _ := StreamAnthropicPassthrough(w, streamR)
 	duration := time.Since(start).Milliseconds()
+	respBody := respBuf.String()
 
 	if firstByteMs == 0 {
 		writeAnthropicSSEError(w, "upstream_error", "上游返回空流或连接中断")
-		entry := s.makeLogEntry(requestedModel, upName, "error", http.StatusBadGateway, duration, "empty stream", "POST", "/v1/messages", true, reqBodyStr, "")
+		entry := s.makeLogEntry(requestedModel, upName, "error", http.StatusBadGateway, duration, "empty stream", "POST", "/v1/messages", true, reqBodyStr, respBody)
 		entry.UsedModel = usedModel
 		entry.Source = source
 		entry.UserAgent = userAgent
@@ -524,7 +563,7 @@ func (s *Server) streamAnthropicPassthrough(w http.ResponseWriter, sr *upstream.
 		return
 	}
 
-	entry := s.makeLogEntry(requestedModel, upName, "success", sr.StatusCode, duration, "", "POST", "/v1/messages", true, reqBodyStr, "")
+	entry := s.makeLogEntry(requestedModel, upName, "success", sr.StatusCode, duration, "", "POST", "/v1/messages", true, reqBodyStr, respBody)
 	entry.UsedModel = usedModel
 	entry.Source = source
 	entry.UserAgent = userAgent
@@ -539,8 +578,10 @@ func (s *Server) streamAnthropicResponse(w http.ResponseWriter, sr *upstream.Str
 	start := time.Now()
 	setSSEHeaders(w)
 
-	usage, firstByteMs, realModel, streamErr := StreamOpenAIToAnthropic(w, sr.Body, requestedModel)
+	streamR, respBuf := captureStreamBody(sr.Body)
+	usage, firstByteMs, realModel, streamErr := StreamOpenAIToAnthropic(w, streamR, requestedModel)
 	duration := time.Since(start).Milliseconds()
+	respBody := respBuf.String()
 
 	if firstByteMs == 0 {
 		errMsg := fmt.Sprintf("empty stream (status=%d, dur=%dms)", sr.StatusCode, duration)
@@ -549,7 +590,7 @@ func (s *Server) streamAnthropicResponse(w http.ResponseWriter, sr *upstream.Str
 		}
 		fmt.Printf("[switch-dev] 流式空转: up=%s model=%s %s\n", upName, requestedModel, errMsg)
 		writeAnthropicSSEError(w, "upstream_error", "上游返回空流或连接中断")
-		entry := s.makeLogEntry(requestedModel, upName, "error", http.StatusBadGateway, duration, errMsg, "POST", "/v1/messages", true, reqBodyStr, "")
+		entry := s.makeLogEntry(requestedModel, upName, "error", http.StatusBadGateway, duration, errMsg, "POST", "/v1/messages", true, reqBodyStr, respBody)
 		entry.UsedModel = usedModel
 		entry.Source = source
 		entry.UserAgent = userAgent
@@ -560,7 +601,7 @@ func (s *Server) streamAnthropicResponse(w http.ResponseWriter, sr *upstream.Str
 		return
 	}
 
-	entry := s.makeLogEntry(requestedModel, upName, "success", sr.StatusCode, duration, "", "POST", "/v1/messages", true, reqBodyStr, "")
+	entry := s.makeLogEntry(requestedModel, upName, "success", sr.StatusCode, duration, "", "POST", "/v1/messages", true, reqBodyStr, respBody)
 	entry.UsedModel = usedModel
 	entry.Source = source
 	entry.UserAgent = userAgent
@@ -578,13 +619,15 @@ func (s *Server) streamOpenAIResponse(w http.ResponseWriter, sr *upstream.Stream
 	start := time.Now()
 	setSSEHeaders(w)
 
-	usage, firstByteMs, _ := StreamOpenAIPassthrough(w, sr.Body)
+	streamR, respBuf := captureStreamBody(sr.Body)
+	usage, firstByteMs, _ := StreamOpenAIPassthrough(w, streamR)
 	duration := time.Since(start).Milliseconds()
+	respBody := respBuf.String()
 
 	// 没发任何事件 -> 上游空流或连接中断，返回 502（避免 200 + 空 body）
 	if firstByteMs == 0 {
 		writeOpenAISSEError(w, "上游返回空流或连接中断")
-		entry := s.makeLogEntry(requestedModel, upName, "error", http.StatusBadGateway, duration, "empty stream", "POST", "/v1/chat/completions", true, reqBodyStr, "")
+		entry := s.makeLogEntry(requestedModel, upName, "error", http.StatusBadGateway, duration, "empty stream", "POST", "/v1/chat/completions", true, reqBodyStr, respBody)
 		entry.UsedModel = usedModel
 		entry.Source = source
 		entry.UserAgent = userAgent
@@ -592,7 +635,7 @@ func (s *Server) streamOpenAIResponse(w http.ResponseWriter, sr *upstream.Stream
 		return
 	}
 
-	entry := s.makeLogEntry(requestedModel, upName, "success", sr.StatusCode, duration, "", "POST", "/v1/chat/completions", true, reqBodyStr, "")
+	entry := s.makeLogEntry(requestedModel, upName, "success", sr.StatusCode, duration, "", "POST", "/v1/chat/completions", true, reqBodyStr, respBody)
 	entry.UsedModel = usedModel
 	entry.Source = source
 	entry.UserAgent = userAgent

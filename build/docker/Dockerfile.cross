@@ -13,7 +13,8 @@
 #   docker run --rm -v $(pwd):/app wails-cross windows amd64
 #   docker run --rm -v $(pwd):/app wails-cross windows arm64
 
-FROM golang:1.25-bookworm
+ARG BASE_IMAGE=golang:1.25-bookworm
+FROM ${BASE_IMAGE}
 
 ARG TARGETARCH
 
@@ -82,6 +83,15 @@ exec zig cc -fno-sanitize=all -target x86_64-macos-none -isysroot /opt/macos-sdk
 ZIGWRAP
 RUN chmod +x /usr/local/bin/zcc-darwin-amd64
 
+# Linux arm64 - uses native GCC inside arm64 container (invoked via --platform linux/arm64)
+# Zig cross-compilation doesn't work for Linux arm64 because CGO requires linking
+# against system GTK/WebKit libraries which are x86_64 in the amd64 container.
+COPY <<'ZIGWRAP' /usr/local/bin/zcc-linux-arm64
+#!/bin/sh
+exec gcc "$@"
+ZIGWRAP
+RUN chmod +x /usr/local/bin/zcc-linux-arm64
+
 # Windows amd64 - uses Zig's bundled mingw
 COPY <<'ZIGWRAP' /usr/local/bin/zcc-windows-amd64
 #!/bin/sh
@@ -142,7 +152,7 @@ case "${OS}-${ARCH}" in
         export GOOS=darwin
         ;;
     linux-arm64|linux-aarch64)
-        export CC=gcc
+        export CC=zcc-linux-arm64
         export GOARCH=arm64
         export GOOS=linux
         ;;

@@ -3,6 +3,21 @@ import { LogService } from "../../bindings/switchdev/service";
 import type { LogEntry } from "../../bindings/switchdev/proxy/models";
 import ConfirmPopover from "./ConfirmPopover";
 
+// 复制到剪贴板
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // fallback
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+}
+
 interface Props {
   logs: LogEntry[]; // 内存实时日志（最新）
 }
@@ -40,6 +55,7 @@ export default function Logs({ logs }: Props) {
   const [history, setHistory] = useState<LogEntry[]>([]);
   const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
   const [counts, setCounts] = useState<StatusCounts>({
     total: 0, success: 0, error: 0, authError: 0, fallback: 0,
   });
@@ -202,6 +218,7 @@ export default function Logs({ logs }: Props) {
                 log={log}
                 expanded={expandedId === log.id}
                 onToggle={() => setExpandedId(expandedId === log.id ? null : log.id)}
+                onDoubleClick={() => setSelectedLog(log)}
               />
             ))}
           </div>
@@ -213,6 +230,11 @@ export default function Logs({ logs }: Props) {
         <div className="text-xs text-[var(--color-text-dim)]">
           历史日志日期：{availableDates.join(" / ")}
         </div>
+      )}
+
+      {/* 日志详情弹窗 */}
+      {selectedLog && (
+        <LogDetailModal log={selectedLog} onClose={() => setSelectedLog(null)} />
       )}
     </div>
   );
@@ -259,7 +281,7 @@ function FilterBtn({
   );
 }
 
-function LogRow({ log, expanded, onToggle }: { log: LogEntry; expanded: boolean; onToggle: () => void }) {
+function LogRow({ log, expanded, onToggle, onDoubleClick }: { log: LogEntry; expanded: boolean; onToggle: () => void; onDoubleClick: () => void }) {
   const color =
     log.status === "success"
       ? "text-[var(--color-success)]"
@@ -271,8 +293,8 @@ function LogRow({ log, expanded, onToggle }: { log: LogEntry; expanded: boolean;
 
   return (
     <div>
-      {/* 概要行（点击展开详情） */}
-      <button onClick={onToggle} className="w-full px-4 py-2.5 hover:bg-[var(--color-surface-2)]/50 text-left">
+      {/* 概要行（点击展开详情，双击查看完整请求/响应） */}
+      <button onClick={onToggle} onDoubleClick={onDoubleClick} className="w-full px-4 py-2.5 hover:bg-[var(--color-surface-2)]/50 text-left">
         <div className="flex items-center gap-3 text-sm">
           <span className="text-[var(--color-text-dim)] font-mono text-xs w-24 whitespace-nowrap">{fmtLogTime(log)}</span>
           <span className="text-xs w-20 truncate" title={log.source || ""}>{log.source || "-"}</span>
@@ -339,6 +361,100 @@ function LogRow({ log, expanded, onToggle }: { log: LogEntry; expanded: boolean;
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// LogDetailModal 双击日志行后的详情弹窗，显示完整请求/响应体
+function LogDetailModal({ log, onClose }: { log: LogEntry; onClose: () => void }) {
+  // Escape 关闭
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const [copied, setCopied] = useState<"req" | "resp" | null>(null);
+
+  const handleCopy = async (text: string, which: "req" | "resp") => {
+    await copyText(text);
+    setCopied(which);
+    setTimeout(() => setCopied(null), 1500);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div
+        className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-2xl max-w-4xl w-full mx-4 max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)] shrink-0">
+          <div className="text-sm font-medium">
+            {log.method || "POST"} {log.path || "/v1/messages"} — {log.model}
+            {log.realModel && log.realModel !== log.model && ` → ${log.realModel}`}
+          </div>
+          <button onClick={onClose} className="text-[var(--color-text-dim)] hover:text-[var(--color-text)] text-lg leading-none px-1">&times;</button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto flex-1 px-5 py-3 space-y-4">
+          {/* 元信息 */}
+          <div className="flex gap-3 text-xs text-[var(--color-text-dim)] flex-wrap">
+            <span>时间：{log.dateTime || log.timestamp}</span>
+            <span>来源：{log.source || "-"}</span>
+            <span>代理：{agentLabel(log.upstream)}</span>
+            <span>状态：{log.status} ({log.code})</span>
+            <span>耗时：{log.duration}ms</span>
+            {(log.firstByteMs ?? 0) > 0 && <span>首字：{log.firstByteMs}ms</span>}
+            <span>Token：↑{log.inputTokens ?? 0} ↓{log.outputTokens ?? 0}</span>
+            {log.cost != null && log.cost > 0 && <span>费用：${log.cost.toFixed(5)}</span>}
+          </div>
+          {log.errorMsg && (
+            <div className="text-xs text-[var(--color-danger)]">错误：{log.errorMsg}</div>
+          )}
+
+          {/* 请求体 */}
+          {log.requestBody && (
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs text-[var(--color-text-dim)] font-medium">请求体</span>
+                <button
+                  onClick={() => handleCopy(prettyJSON(log.requestBody!), "req")}
+                  className="text-xs px-2 py-0.5 rounded bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[var(--color-text-dim)]"
+                >
+                  {copied === "req" ? "已复制" : "复制"}
+                </button>
+              </div>
+              <pre className="text-xs font-mono p-3 rounded bg-[var(--color-bg)] overflow-x-auto whitespace-pre-wrap max-h-[35vh] overflow-y-auto">
+                {prettyJSON(log.requestBody)}
+              </pre>
+            </div>
+          )}
+
+          {/* 响应体 */}
+          {log.responseBody && (
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs text-[var(--color-text-dim)] font-medium">响应体</span>
+                <button
+                  onClick={() => handleCopy(prettyJSON(log.responseBody!), "resp")}
+                  className="text-xs px-2 py-0.5 rounded bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[var(--color-text-dim)]"
+                >
+                  {copied === "resp" ? "已复制" : "复制"}
+                </button>
+              </div>
+              <pre className="text-xs font-mono p-3 rounded bg-[var(--color-bg)] overflow-x-auto whitespace-pre-wrap max-h-[35vh] overflow-y-auto">
+                {prettyJSON(log.responseBody)}
+              </pre>
+            </div>
+          )}
+
+          {!log.requestBody && !log.responseBody && (
+            <div className="text-xs text-[var(--color-text-dim)] text-center py-4">无请求/响应体数据</div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

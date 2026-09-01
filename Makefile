@@ -6,9 +6,12 @@
 #   make dmg            # 打包 macOS DMG 安装镜像（含 .app + Applications 快捷方式）
 #   make windows        # 交叉编译 Windows .exe（含图标嵌入）
 #   make nsis           # 打包 Windows NSIS 安装程序（需 makensis）
-#   make dist           # 一键打包所有平台安装包（DMG + NSIS）
+#   make deb            # 打包 Linux deb 安装包（amd64）
+#   make deb-arm64      # 打包 Linux deb 安装包（arm64）
+#   make dist           # 一键打包所有平台安装包（DMG + NSIS + deb amd64/arm64）
 #   make build-server   # 构建本机 server 版（无 GUI，bin/switch-dev-server）
 #   make build-binaries # 构建全平台裸二进制到 dist/（自动更新用）
+#   make build-server-binaries # 构建全平台 server 裸二进制到 dist/（无 GUI 服务器部署）
 #   make test           # 运行 Go 测试
 #   make fmt            # 格式化 Go 代码
 #   make version        # 显示当前版本号
@@ -33,7 +36,7 @@ DIST        := dist
 # 架构
 ARCH        ?= amd64
 
-.PHONY: build package package-universal dmg dmg-universal windows nsis dist build-server build-frontend build-binaries build-darwin-arm64 build-darwin-amd64 build-windows-amd64 test fmt version tag release upload push deploy clean sync-version changelog-auto changelog-release
+.PHONY: build package package-universal dmg dmg-universal windows nsis deb dist build-server build-frontend build-binaries build-server-binaries build-darwin-arm64 build-darwin-amd64 build-windows-amd64 build-windows-arm64 build-linux-amd64 build-linux-arm64 build-server-linux-amd64 build-server-linux-arm64 build-server-darwin-arm64 build-server-darwin-amd64 test fmt version tag release upload push deploy clean sync-version changelog-auto changelog-release
 
 ## 同步版本号：V -> build/config.yml + version/config.yml（两处保持一致，单一真相来源是 V 参数 / build/config.yml）
 sync-version:
@@ -190,8 +193,20 @@ nsis: windows
 	cp bin/$(APP)-$(ARCH)-installer.exe $(DIST)/$(APP)-windows-$(ARCH)-installer.exe
 	@echo "✅ NSIS 安装包完成: $(DIST)/$(APP)-windows-$(ARCH)-installer.exe"
 
-## 一键打包所有平台安装包（Universal DMG + NSIS）
-dist: dmg-universal nsis
+## 打包 Linux deb 安装包（需先构建对应架构二进制）
+deb: build-linux-amd64
+	@wails3 generate .desktop -name "$(APP)" -exec "$(APP)" -icon "$(APP)" -outputfile "build/linux/$(APP).desktop" -categories "Development;"
+	@GOARCH=amd64 wails3 tool package -name "$(APP)" -format deb -config ./build/linux/nfpm/nfpm.yaml -out $(DIST)
+	@echo "✅ deb 打包完成: $(DIST)/$(APP)_*.deb"
+
+## 打包 Linux arm64 deb 安装包
+deb-arm64: build-linux-arm64
+	@wails3 generate .desktop -name "$(APP)" -exec "$(APP)" -icon "$(APP)" -outputfile "build/linux/$(APP).desktop" -categories "Development;"
+	@GOARCH=arm64 wails3 tool package -name "$(APP)" -format deb -config ./build/linux/nfpm/nfpm.yaml -out $(DIST)
+	@echo "✅ deb arm64 打包完成: $(DIST)/$(APP)_*_arm64.deb"
+
+## 一键打包所有平台安装包（Universal DMG + NSIS + deb amd64）
+dist: dmg-universal nsis deb
 	@echo ""
 	@echo "🎉 全部安装包打包完成:"
 	@ls -lh $(DIST)/*
@@ -244,11 +259,99 @@ build-windows-amd64: sync-version build-frontend
 	@rm -f wails_windows_amd64.syso
 	@echo "✅ Windows amd64: $(DIST)/$(APP)-windows-amd64.exe"
 
+## 交叉编译 Windows arm64 裸二进制（CGO_ENABLED=0，含图标嵌入）
+build-windows-arm64: sync-version build-frontend
+	@mkdir -p $(DIST)
+	wails3 generate syso -arch arm64 \
+		-icon build/windows/icon.ico \
+		-manifest build/windows/wails.exe.manifest \
+		-info build/windows/info.json \
+		-out wails_windows_arm64.syso
+	GOOS=windows CGO_ENABLED=0 GOARCH=arm64 \
+		go build -tags production -trimpath -buildvcs=false \
+		-ldflags="-w -s -H windowsgui" -o $(DIST)/$(APP)-windows-arm64.exe .
+	@rm -f wails_windows_arm64.syso
+	@echo "✅ Windows arm64: $(DIST)/$(APP)-windows-arm64.exe"
+
+## Docker 交叉编译 Linux amd64 裸二进制（需 wails-cross 镜像，首次运行 task setup:docker 构建）
+build-linux-amd64: sync-version build-frontend
+	@docker info > /dev/null 2>&1 || (echo "❌ Docker 未运行" && exit 1)
+	@docker image inspect wails-cross > /dev/null 2>&1 || (echo "❌ wails-cross 镜像不存在，先运行 task setup:docker" && exit 1)
+	@mkdir -p $(DIST)
+	docker run --rm \
+		-v "$(shell pwd):/app" \
+		-v "$(shell go env GOPATH)/pkg/mod:/go/pkg/mod" \
+		-e APP_NAME="$(APP)" \
+		wails-cross linux amd64
+	docker run --rm -v "$(shell pwd):/app" alpine chown -R $$(id -u):$$(id -g) /app/bin
+	mv bin/$(APP)-linux-amd64 $(DIST)/$(APP)-linux-amd64
+	@echo "✅ Linux amd64: $(DIST)/$(APP)-linux-amd64"
+
+## Docker 交叉编译 Linux arm64 裸二进制（通过 QEMU 模拟运行 arm64 容器，较慢）
+build-linux-arm64: sync-version build-frontend
+	@docker info > /dev/null 2>&1 || (echo "❌ Docker 未运行" && exit 1)
+	@if ! docker image inspect wails-cross-arm64 > /dev/null 2>&1; then \
+		echo "🔄 首次构建 arm64 镜像（耐心等待）..."; \
+		docker build --platform linux/arm64 \
+			--build-arg BASE_IMAGE=golang:1.25-bookworm-arm64 \
+			-t wails-cross-arm64 \
+			-f build/docker/Dockerfile.cross build/docker/; \
+	fi
+	@mkdir -p $(DIST)
+	docker run --rm --platform linux/arm64 \
+		-v "$(shell pwd):/app" \
+		-v "$(shell go env GOPATH)/pkg/mod:/go/pkg/mod" \
+		-e APP_NAME="$(APP)" \
+		wails-cross-arm64 linux arm64
+	docker run --rm --platform linux/arm64 -v "$(shell pwd):/app" alpine chown -R $$(id -u):$$(id -g) /app/bin
+	mv bin/$(APP)-linux-arm64 $(DIST)/$(APP)-linux-arm64
+	@echo "✅ Linux arm64: $(DIST)/$(APP)-linux-arm64"
+
 ## 构建全平台裸二进制到 dist/（自动更新检测的资产）
-build-binaries: build-darwin-arm64 build-darwin-amd64 build-windows-amd64
+build-binaries: build-darwin-arm64 build-darwin-amd64 build-windows-amd64 build-windows-arm64 build-linux-amd64 build-linux-arm64
 	@echo ""
 	@echo "🎉 全部裸二进制构建完成:"
 	@ls -lh $(DIST)/$(APP)-*
+
+## ===== Server 裸二进制构建（无 GUI，供服务器部署，不走自动更新）=====
+
+## 构建 server Linux amd64 裸二进制（CGO_ENABLED=0，无需 Docker）
+build-server-linux-amd64: sync-version build-frontend
+	@mkdir -p $(DIST)
+	GOOS=linux CGO_ENABLED=0 GOARCH=amd64 \
+		go build -tags server -trimpath -buildvcs=false \
+		-ldflags="-w -s" -o $(DIST)/$(APP)-server-linux-amd64 .
+	@echo "✅ Server Linux amd64: $(DIST)/$(APP)-server-linux-amd64"
+
+## 构建 server Linux arm64 裸二进制（CGO_ENABLED=0，无需 Docker）
+build-server-linux-arm64: sync-version build-frontend
+	@mkdir -p $(DIST)
+	GOOS=linux CGO_ENABLED=0 GOARCH=arm64 \
+		go build -tags server -trimpath -buildvcs=false \
+		-ldflags="-w -s" -o $(DIST)/$(APP)-server-linux-arm64 .
+	@echo "✅ Server Linux arm64: $(DIST)/$(APP)-server-linux-arm64"
+
+## 构建 server macOS arm64 裸二进制（CGO_ENABLED=0）
+build-server-darwin-arm64: sync-version build-frontend
+	@mkdir -p $(DIST)
+	GOOS=darwin CGO_ENABLED=0 GOARCH=arm64 \
+		go build -tags server -trimpath -buildvcs=false \
+		-ldflags="-w -s" -o $(DIST)/$(APP)-server-darwin-arm64 .
+	@echo "✅ Server macOS arm64: $(DIST)/$(APP)-server-darwin-arm64"
+
+## 构建 server macOS amd64 裸二进制（CGO_ENABLED=0）
+build-server-darwin-amd64: sync-version build-frontend
+	@mkdir -p $(DIST)
+	GOOS=darwin CGO_ENABLED=0 GOARCH=amd64 \
+		go build -tags server -trimpath -buildvcs=false \
+		-ldflags="-w -s" -o $(DIST)/$(APP)-server-darwin-amd64 .
+	@echo "✅ Server macOS amd64: $(DIST)/$(APP)-server-darwin-amd64"
+
+## 构建全平台 server 裸二进制到 dist/
+build-server-binaries: build-server-linux-amd64 build-server-linux-arm64 build-server-darwin-arm64 build-server-darwin-amd64
+	@echo ""
+	@echo "🎉 全部 server 裸二进制构建完成:"
+	@ls -lh $(DIST)/$(APP)-server-*
 
 ## 运行 Go 测试（排除 wails 模板目录 build/，其 package main 无 func main 会编译报错）
 test:
@@ -334,16 +437,16 @@ release:
 
 ## 上传 dist/ 产物到 GitHub Release：
 ##   - 裸二进制（自动更新用，名称须匹配 updater/github.go 的 assetName()，必须存在）
-##   - 安装包 DMG/NSIS（用户手动下载用，存在则上传，缺失跳过并提示）
+##   - 安装包 DMG/NSIS/deb（用户手动下载用，存在则上传，缺失跳过并提示）
 upload:
 	@test -n "$(V)" || (echo "❌ 版本号为空" && exit 1)
 	@test -n "$$(gh auth status 2>&1 | grep -o 'Logged in')" || (echo "❌ 请先运行 gh auth login" && exit 1)
 	@echo "🔄 上传 dist/ 产物到 Release $(TAG)..."
-	@required="$(DIST)/$(APP)-darwin-arm64 $(DIST)/$(APP)-darwin-amd64 $(DIST)/$(APP)-windows-amd64.exe"; \
+	@required="$(DIST)/$(APP)-darwin-arm64 $(DIST)/$(APP)-darwin-amd64 $(DIST)/$(APP)-windows-amd64.exe $(DIST)/$(APP)-linux-amd64"; \
 	missing=""; \
 	for f in $$required; do [ -f "$$f" ] || missing="$$missing $$f"; done; \
 	if [ -n "$$missing" ]; then echo "❌ 缺少裸二进制:$$missing（先 make build-binaries）"; exit 1; fi; \
-	optional="$(DIST)/$(APP)-darwin-universal.dmg $(DIST)/$(APP)-windows-amd64-installer.exe"; \
+	optional="$(DIST)/$(APP)-linux-arm64 $(DIST)/$(APP)-windows-arm64.exe $(DIST)/$(APP)-darwin-universal.dmg $(DIST)/$(APP)-windows-amd64-installer.exe $(DIST)/$(APP)_*_amd64.deb $(DIST)/$(APP)-server-linux-amd64 $(DIST)/$(APP)-server-linux-arm64 $(DIST)/$(APP)-server-darwin-arm64 $(DIST)/$(APP)-server-darwin-amd64"; \
 	toUpload="$$required"; \
 	for f in $$optional; do [ -f "$$f" ] && toUpload="$$toUpload $$f" || echo "ℹ️ 跳过可选安装包（不存在）: $$f"; done; \
 	gh release upload $(TAG) $$toUpload --repo $(REPO) --clobber; \
@@ -356,7 +459,7 @@ push:
 	git push origin $(TAG) 2>/dev/null || echo "ℹ️ tag $(TAG) 已存在或无新 tag 可推"
 
 ## 一键发布：构建裸二进制 + 安装包（DMG/NSIS）-> 打 tag -> 推码（含 tag）-> 发 release -> 上传全部产物
-deploy: build-binaries dist tag push release upload
+deploy: build-binaries build-server-binaries dist tag push release upload
 	@echo "🎉 发布流程完成: https://github.com/$(REPO)/releases/tag/$(TAG)"
 
 ## 清理产物

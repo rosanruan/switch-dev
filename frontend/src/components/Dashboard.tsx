@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ProxyService, LogService } from "../../bindings/switchdev/service";
 import type { AllCredStatus, SpeedStats } from "../../bindings/switchdev/service/models";
 import type { ProxyStatus } from "../../bindings/switchdev/proxy/models";
 import type { Config } from "../../bindings/switchdev/config/models";
+import { useWailsEvent } from "../hooks/useWailsEvent";
 
 import CopyButton from "./CopyButton";
 
@@ -27,6 +28,19 @@ export default function Dashboard({ proxy, creds, config, onGoCredentials }: Pro
   const [speed, setSpeed] = useState<SpeedStats | null>(null);
   // apiKey 显示/隐藏切换
   const [showKey, setShowKey] = useState(false);
+
+  // 总请求数：初始从 proxy.requests（后端从 DB 查），每收到 log:new 就 +1
+  const [totalReqs, setTotalReqs] = useState(0);
+  const prevProxyReqs = useRef(0);
+  useEffect(() => {
+    if (proxy?.requests != null && proxy.requests !== prevProxyReqs.current) {
+      setTotalReqs(proxy.requests);
+      prevProxyReqs.current = proxy.requests;
+    }
+  }, [proxy?.requests]);
+  useWailsEvent("log:new", () => {
+    setTotalReqs((n) => n + 1);
+  });
 
   useEffect(() => {
     LogService.GetTodaySummary()
@@ -202,7 +216,7 @@ export default function Dashboard({ proxy, creds, config, onGoCredentials }: Pro
             </div>
             <div>
               <div className="text-[var(--color-text-dim)]">总请求数</div>
-              <div className="font-mono">{proxy?.requests ?? 0}</div>
+              <div className="font-mono">{totalReqs}</div>
             </div>
             <div>
               <div className="text-[var(--color-text-dim)]">链长度</div>

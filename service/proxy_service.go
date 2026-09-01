@@ -51,10 +51,17 @@ func (s *ProxyService) SetPort(port int) {
 
 // GetDashboard 获取仪表盘聚合数据（状态 + 凭据 + 统计 + 最近日志）
 func (s *ProxyService) GetDashboard() *Dashboard {
+	status := s.core.server.GetStatus()
+	// 用数据库真实总数覆盖内存计数器（重启后仍准确）
+	if s.core.db != nil {
+		if total, err := s.core.db.CountLogs(); err == nil {
+			status.Requests = total
+		}
+	}
 	return &Dashboard{
-		Proxy:    s.core.server.GetStatus(),
-		Creds:    s.core.GetCredStatus(),
-		Stats:    s.core.GetLogStats(),
+		Proxy:      status,
+		Creds:      s.core.GetCredStatus(),
+		Stats:      s.core.GetLogStats(),
 		RecentLogs: s.core.GetRecentLogs(10),
 	}
 }
