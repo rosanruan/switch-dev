@@ -157,6 +157,10 @@ func main() {
 	}
 	// 注册免费 API 刷新回调：provider 增删/模型变化时重建上游 + 模型列表
 	registerProviderAPIRefresh(server, providerAPIMgr, providerMonitor, core)
+	// 注入第三方供应商枚举回调：config.Validate 时能精确校验 provider id 是否已注册
+	config.SetAdditionalUpstreamValidator(func(id string) bool {
+		return server.GetProviderAPI(id) != nil
+	})
 
 	// 6. Wails 服务（暴露给前端）
 	providerAPISvc := service.NewProviderAPIService(providerAPIMgr, providerCatalogLoader, providerMonitor, core)
@@ -278,6 +282,10 @@ func main() {
 	go providerMonitor.Start(app.Context())
 	// 首次刷新注册免费上游 + 模型（启动时构建）
 	registerProviderAPIRefresh(server, providerAPIMgr, providerMonitor, core)
+	// 注入第三方供应商枚举回调：config.Validate 时能精确校验 provider id 是否已注册
+	config.SetAdditionalUpstreamValidator(func(id string) bool {
+		return server.GetProviderAPI(id) != nil
+	})
 
 	// 窗口聚焦时检查更新（长时间未操作后激活）
 	mainWindow.OnWindowEvent(events.Common.WindowFocus, func(event *application.WindowEvent) {

@@ -76,10 +76,27 @@ func (m *Manager) IsUpstreamEnabled(name string) bool {
 // 成功后触发 onChange 回调（在锁外调用，避免回调内再访问 Manager 导致死锁）
 func (m *Manager) SaveConfig(newCfg *Config) error {
 	m.mu.Lock()
-
-	// 校验
-	if err := newCfg.Validate(); err != nil {
+	if err := m.saveConfigLocked(newCfg); err != nil {
 		m.mu.Unlock()
+		return err
+	}
+	cb := m.onChange
+	m.mu.Unlock()
+
+	if cb != nil {
+		cb()
+	}
+	return nil
+}
+
+// saveConfigLocked 执行校验 + 原子替换 + 写盘。
+// caller must hold m.mu（写锁）。
+//
+// 抽出来是为给未来「持锁原子多步变更」一个安全出口：
+// 在锁内连续修改多个字段后一次性 saveConfigLocked，避免拆成多次 SaveConfig
+// 产生中间态被并发读到，也不必担心 SaveConfig 再 m.mu.Lock() 死锁。
+func (m *Manager) saveConfigLocked(newCfg *Config) error {
+	if err := newCfg.Validate(); err != nil {
 		return fmt.Errorf("配置校验失败: %w", err)
 	}
 
@@ -91,16 +108,7 @@ func (m *Manager) SaveConfig(newCfg *Config) error {
 
 	// 写盘
 	if err := newCfg.Save(); err != nil {
-		m.mu.Unlock()
 		return fmt.Errorf("保存配置失败: %w", err)
-	}
-
-	// 取出回调后解锁（回调在锁外调用）
-	cb := m.onChange
-	m.mu.Unlock()
-
-	if cb != nil {
-		cb()
 	}
 	return nil
 }
@@ -138,7 +146,8 @@ func (m *Manager) SetOnChange(fn func()) {
 // 切换后继续编辑不会回写方案，需再次 SavePreset 同名覆盖。
 //
 // 以下方法一律走 Get() 取克隆 -> 改 -> SaveConfig 的模式。
-// 不能自己持 m.mu 再调 SaveConfig —— 后者会 m.mu.Lock()，会死锁。
+// SaveConfig 内部自管理 m.mu，调用方无需（也不应）持锁；
+// 若需锁内原子多步变更，改走 saveConfigLocked（caller must hold m.mu）。
 
 // findPreset 返回方案在切片中的下标，不存在返回 -1
 func findPreset(presets []Preset, name string) int {

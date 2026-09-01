@@ -250,9 +250,9 @@ build-binaries: build-darwin-arm64 build-darwin-amd64 build-windows-amd64
 	@echo "🎉 全部裸二进制构建完成:"
 	@ls -lh $(DIST)/$(APP)-*
 
-## 运行 Go 测试
+## 运行 Go 测试（排除 wails 模板目录 build/，其 package main 无 func main 会编译报错）
 test:
-	go test ./...
+	go test $$(shell go list ./... | grep -v '/build/')
 
 ## 格式化 Go 代码
 fmt:

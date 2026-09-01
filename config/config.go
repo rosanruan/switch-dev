@@ -542,6 +542,16 @@ func (c *Config) IsUpstreamEnabled(name string) bool {
 	return s.Enabled
 }
 
+// additionalUpstreamValidator 是由 main 启动时注入的第三方供应商枚举回调。
+// nil 时 isValidUpstream 回落到宽松策略（非空即合法），保证 config 包可独立测试。
+var additionalUpstreamValidator func(string) bool
+
+// SetAdditionalUpstreamValidator 注入第三方供应商 id 枚举函数（由 main.go 调用）。
+// fn 返回 true 表示该 id 对应一个已注册的 ProviderAPI 供应商。
+func SetAdditionalUpstreamValidator(fn func(string) bool) {
+	additionalUpstreamValidator = fn
+}
+
 // isValidUpstream 检查 upstream 名是否合法。
 // 内置 4 上游固定；其余非空名都视为合法的 ProviderAPI 供应商 id
 // （内置目录 slug 如 "groq"，或自定义的 "custom-xxxxxx"，由 ProviderAPI 子系统动态管理，
@@ -553,6 +563,10 @@ func isValidUpstream(u string) bool {
 	case "joycode", "deveco", "opencode", "workbuddy":
 		return true
 	}
+	if additionalUpstreamValidator != nil {
+		return additionalUpstreamValidator(u)
+	}
+	// 未注入时维持宽松（非空即合法），保证 config 包可独立测试
 	return strings.TrimSpace(u) != ""
 }
 
