@@ -36,7 +36,7 @@ DIST        := dist
 # 架构
 ARCH        ?= amd64
 
-.PHONY: build package package-universal dmg dmg-universal windows nsis deb dist build-server build-frontend build-binaries build-server-binaries build-darwin-arm64 build-darwin-amd64 build-windows-amd64 build-windows-arm64 build-linux-amd64 build-linux-arm64 build-server-linux-amd64 build-server-linux-arm64 build-server-darwin-arm64 build-server-darwin-amd64 test fmt version tag release upload push deploy clean sync-version changelog-auto changelog-release
+.PHONY: build package package-universal dmg dmg-universal windows nsis nsis-arm64 deb dist build-server build-frontend build-binaries build-server-binaries build-darwin-arm64 build-darwin-amd64 build-windows-amd64 build-windows-arm64 build-linux-amd64 build-linux-arm64 build-server-linux-amd64 build-server-linux-arm64 build-server-darwin-arm64 build-server-darwin-amd64 test fmt version tag release upload push deploy clean sync-version changelog-auto changelog-release
 
 ## 同步版本号：V -> build/config.yml + version/config.yml（两处保持一致，单一真相来源是 V 参数 / build/config.yml）
 sync-version:
@@ -177,21 +177,34 @@ windows: sync-version
 	@rm -f wails_windows_$(ARCH).syso
 	@echo "✅ Windows 构建完成: bin/$(APP).exe"
 
-## 打包 Windows NSIS 安装程序（需 makensis）
+## 打包 Windows NSIS 安装程序 - amd64（需 makensis）
 nsis: windows
 	@mkdir -p $(DIST)
 	@# 生成 WebView2 引导程序
 	wails3 generate webview2bootstrapper -dir build/windows/nsis
 	@# 构建 NSIS 安装包（显式注入版本号/公司/产品名/版权，避免 wails_tools.nsh 的缓存默认值过期）
-	makensis -DARG_WAILS_$(shell echo $(ARCH) | tr 'a-z' 'A-Z')_BINARY="$(shell pwd)/bin/$(APP).exe" \
+	makensis -DARG_WAILS_AMD64_BINARY="$(shell pwd)/bin/$(APP).exe" \
 		-DINFO_PRODUCTVERSION="$(V)" \
 		-DINFO_COMPANYNAME="Switch Dev" \
 		-DINFO_PRODUCTNAME="Switch Dev" \
 		-DINFO_COPYRIGHT="(c) 2025-2026, Switch Dev Contributors" \
 		"$(shell pwd)/build/windows/nsis/project.nsi"
 	@# 复制到 dist
-	cp bin/$(APP)-$(ARCH)-installer.exe $(DIST)/$(APP)-windows-$(ARCH)-installer.exe
-	@echo "✅ NSIS 安装包完成: $(DIST)/$(APP)-windows-$(ARCH)-installer.exe"
+	cp bin/$(APP)-amd64-installer.exe $(DIST)/$(APP)-windows-amd64-installer.exe
+	@echo "✅ NSIS amd64 安装包完成: $(DIST)/$(APP)-windows-amd64-installer.exe"
+
+## 打包 Windows NSIS 安装程序 - arm64（需 makensis）
+nsis-arm64: build-windows-arm64
+	@mkdir -p $(DIST)
+	wails3 generate webview2bootstrapper -dir build/windows/nsis
+	makensis -DARG_WAILS_ARM64_BINARY="$(shell pwd)/dist/$(APP)-windows-arm64.exe" \
+		-DINFO_PRODUCTVERSION="$(V)" \
+		-DINFO_COMPANYNAME="Switch Dev" \
+		-DINFO_PRODUCTNAME="Switch Dev" \
+		-DINFO_COPYRIGHT="(c) 2025-2026, Switch Dev Contributors" \
+		"$(shell pwd)/build/windows/nsis/project.nsi"
+	cp bin/$(APP)-arm64-installer.exe $(DIST)/$(APP)-windows-arm64-installer.exe
+	@echo "✅ NSIS arm64 安装包完成: $(DIST)/$(APP)-windows-arm64-installer.exe"
 
 ## 打包 Linux deb 安装包（需先构建对应架构二进制）
 deb: build-linux-amd64
@@ -205,8 +218,8 @@ deb-arm64: build-linux-arm64
 	@GOARCH=arm64 wails3 tool package -name "$(APP)" -format deb -config ./build/linux/nfpm/nfpm.yaml -out $(DIST)
 	@echo "✅ deb arm64 打包完成: $(DIST)/$(APP)_*_arm64.deb"
 
-## 一键打包所有平台安装包（Universal DMG + NSIS + deb amd64）
-dist: dmg-universal nsis deb
+## 一键打包所有平台安装包（Universal DMG + NSIS amd64/arm64 + deb amd64/arm64）
+dist: dmg-universal nsis nsis-arm64 deb deb-arm64
 	@echo ""
 	@echo "🎉 全部安装包打包完成:"
 	@ls -lh $(DIST)/*
@@ -276,21 +289,21 @@ build-windows-arm64: sync-version build-frontend
 ## Docker 交叉编译 Linux amd64 裸二进制（需 wails-cross 镜像，首次运行 task setup:docker 构建）
 build-linux-amd64: sync-version build-frontend
 	@docker info > /dev/null 2>&1 || (echo "❌ Docker 未运行" && exit 1)
-	@docker image inspect wails-cross > /dev/null 2>&1 || (echo "❌ wails-cross 镜像不存在，先运行 task setup:docker" && exit 1)
+	@docker image inspect wails-cross:latest > /dev/null 2>&1 || (echo "❌ wails-cross 镜像不存在，先运行 task setup:docker" && exit 1)
 	@mkdir -p $(DIST)
 	docker run --rm \
 		-v "$(shell pwd):/app" \
 		-v "$(shell go env GOPATH)/pkg/mod:/go/pkg/mod" \
 		-e APP_NAME="$(APP)" \
 		wails-cross linux amd64
-	docker run --rm -v "$(shell pwd):/app" alpine chown -R $$(id -u):$$(id -g) /app/bin
+	docker run --rm --entrypoint chown -v "$(shell pwd):/app" wails-cross -R $$(id -u):$$(id -g) /app/bin
 	mv bin/$(APP)-linux-amd64 $(DIST)/$(APP)-linux-amd64
 	@echo "✅ Linux amd64: $(DIST)/$(APP)-linux-amd64"
 
 ## Docker 交叉编译 Linux arm64 裸二进制（通过 QEMU 模拟运行 arm64 容器，较慢）
 build-linux-arm64: sync-version build-frontend
 	@docker info > /dev/null 2>&1 || (echo "❌ Docker 未运行" && exit 1)
-	@if ! docker image inspect wails-cross-arm64 > /dev/null 2>&1; then \
+	@if ! docker image inspect wails-cross-arm64:latest > /dev/null 2>&1; then \
 		echo "🔄 首次构建 arm64 镜像（耐心等待）..."; \
 		docker build --platform linux/arm64 \
 			--build-arg BASE_IMAGE=golang:1.25-bookworm-arm64 \
@@ -303,7 +316,7 @@ build-linux-arm64: sync-version build-frontend
 		-v "$(shell go env GOPATH)/pkg/mod:/go/pkg/mod" \
 		-e APP_NAME="$(APP)" \
 		wails-cross-arm64 linux arm64
-	docker run --rm --platform linux/arm64 -v "$(shell pwd):/app" alpine chown -R $$(id -u):$$(id -g) /app/bin
+	docker run --rm --platform linux/arm64 --entrypoint chown -v "$(shell pwd):/app" wails-cross-arm64 -R $$(id -u):$$(id -g) /app/bin
 	mv bin/$(APP)-linux-arm64 $(DIST)/$(APP)-linux-arm64
 	@echo "✅ Linux arm64: $(DIST)/$(APP)-linux-arm64"
 
@@ -446,7 +459,7 @@ upload:
 	missing=""; \
 	for f in $$required; do [ -f "$$f" ] || missing="$$missing $$f"; done; \
 	if [ -n "$$missing" ]; then echo "❌ 缺少裸二进制:$$missing（先 make build-binaries）"; exit 1; fi; \
-	optional="$(DIST)/$(APP)-linux-arm64 $(DIST)/$(APP)-windows-arm64.exe $(DIST)/$(APP)-darwin-universal.dmg $(DIST)/$(APP)-windows-amd64-installer.exe $(DIST)/$(APP)_*_amd64.deb $(DIST)/$(APP)-server-linux-amd64 $(DIST)/$(APP)-server-linux-arm64 $(DIST)/$(APP)-server-darwin-arm64 $(DIST)/$(APP)-server-darwin-amd64"; \
+	optional="$(DIST)/$(APP)-linux-arm64 $(DIST)/$(APP)-windows-arm64.exe $(DIST)/$(APP)-darwin-universal.dmg $(DIST)/$(APP)-windows-amd64-installer.exe $(DIST)/$(APP)-windows-arm64-installer.exe $(DIST)/$(APP)_*_amd64.deb $(DIST)/$(APP)_*_arm64.deb $(DIST)/$(APP)-server-linux-amd64 $(DIST)/$(APP)-server-linux-arm64 $(DIST)/$(APP)-server-darwin-arm64 $(DIST)/$(APP)-server-darwin-amd64"; \
 	toUpload="$$required"; \
 	for f in $$optional; do [ -f "$$f" ] && toUpload="$$toUpload $$f" || echo "ℹ️ 跳过可选安装包（不存在）: $$f"; done; \
 	gh release upload $(TAG) $$toUpload --repo $(REPO) --clobber; \

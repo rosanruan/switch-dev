@@ -18,13 +18,22 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-01
+
 ### 新增
 - 检测到新版本时全局弹窗提示（不再仅限于设置页内），大版本（major/minor 变化）强制更新不可关闭，小版本（仅 patch 变化）可跳过或稍后再说
 - 跳过版本持久化：小版本更新可选择「跳过此版本」，跳过的版本号写入配置，后续不再提示
 - 窗口被激活时自动检查更新（长时间未操作后回到应用即触发，5 分钟防抖避免频繁请求）
+- Server 模式（无 GUI）全平台裸二进制构建与发布：`make build-server-binaries` 交叉编译 Linux/macOS amd64/arm64 四个 server 产物，`make deploy` 自动上传至 GitHub Release，供服务器部署使用
+
+### 修复
+- 修复 macOS 标题栏红绿灯按钮与页面内容重叠的问题：改用 MacTitleBarHidden 替代 MacTitleBarHiddenInset，避免 NSToolbar 导致交通灯按钮侵入 header 区域
+- 修复仪表盘「总请求数」始终显示 0 的问题：改从数据库 logs 表查询累计总数（重启不丢数据），并监听 log:new 事件实时递增
 
 ### 变更
 - 自动更新检查间隔从 6 小时缩短为 2 小时，更快发现新版本
+- Server 模式构建改用 CGO_ENABLED=0 直接交叉编译，不再依赖 Docker/QEMU 模拟，构建速度从 1 小时+降至数十秒
+- `make dist` 暂不打包 Linux arm64 deb 安装包（裸二进制仍正常构建）
 
 ## [0.1.3] - 2026-08-24
 

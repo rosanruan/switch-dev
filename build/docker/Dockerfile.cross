@@ -18,6 +18,15 @@ FROM ${BASE_IMAGE}
 
 ARG TARGETARCH
 
+# 国内镜像加速（构建时可 --build-arg USE_CN_MIRROR=0 关闭）
+ARG USE_CN_MIRROR=1
+RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
+      rm -f /etc/apt/sources.list.d/debian.sources; \
+      echo 'deb [trusted=yes] http://mirrors.aliyun.com/debian trixie main contrib non-free non-free-firmware' > /etc/apt/sources.list; \
+      echo 'deb [trusted=yes] http://mirrors.aliyun.com/debian trixie-updates main contrib non-free non-free-firmware' >> /etc/apt/sources.list; \
+      echo 'deb [trusted=yes] http://mirrors.aliyun.com/debian-security trixie-security main contrib non-free non-free-firmware' >> /etc/apt/sources.list; \
+    fi
+
 # Install base tools, GCC, and GTK/WebKit dev packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl xz-utils nodejs npm pkg-config gcc libc6-dev \
@@ -181,6 +190,7 @@ esac
 
 export CGO_ENABLED=1
 export CGO_CFLAGS="-w"
+export GOPROXY=${GOPROXY:-https://goproxy.cn,direct}
 
 # Build frontend if exists and not already built (host may have built it)
 if [ -d "frontend" ] && [ -f "frontend/package.json" ] && [ ! -d "frontend/dist" ]; then
