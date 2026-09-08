@@ -9,6 +9,7 @@ import PricingEditor from "./PricingEditor";
 import UpdatePanel from "./UpdatePanel";
 import PresetSwitcher from "./PresetSwitcher";
 import ConfirmPopover from "./ConfirmPopover";
+import TrashIcon from "./TrashIcon";
 import { ModelSelect, FreeBadge } from "./ModelSelect";
 import { useWailsEvent } from "../hooks/useWailsEvent";
 
@@ -175,6 +176,12 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
   });
   useWailsEvent("cred:change", () => {
     ConfigService.RefreshModels()
+      .then((a) => setAvailable(stripFreeForProviders((a ?? []).filter((x): x is UpstreamModels => x !== null))))
+      .catch(() => {});
+  });
+  // 后台目录刷新完成：只读缓存即可，别再触发一次拉取（RefreshModels 会重新打上游）
+  useWailsEvent("models:change", () => {
+    ConfigService.GetAvailableModels()
       .then((a) => setAvailable(stripFreeForProviders((a ?? []).filter((x): x is UpstreamModels => x !== null))))
       .catch(() => {});
   });
@@ -807,11 +814,35 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
               onClick={refreshModels}
               disabled={refreshingModels}
               className="px-3 py-1.5 text-sm rounded-lg bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] disabled:opacity-50"
-              title="从上游接口重新拉取模型列表"
+              title="从上游接口重新拉取模型列表（结果会持久化，重启后仍可用）"
             >
               {refreshingModels ? "刷新中..." : "🔄 刷新模型"}
             </button>
           </div>
+        </div>
+        {/* 各上游模型来源（三种模式都可见） */}
+        <div className="flex gap-1.5 flex-wrap mb-3">
+          {available.map((u) => (
+            <span
+              key={u.upstream}
+              className={`text-[10px] px-1.5 py-0.5 rounded ${
+                u.source === "live"
+                  ? "bg-[var(--color-success)]/20 text-[var(--color-success)]"
+                  : u.source === "free"
+                    ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]"
+                    : "bg-[var(--color-warning)]/20 text-[var(--color-warning)]"
+              }`}
+              title={
+                u.source === "live"
+                  ? "接口实时拉取（已持久化）"
+                  : u.source === "free"
+                    ? "第三方供应商已验证模型"
+                    : "本地内置白名单（接口拉取失败或该上游无模型接口）"
+              }
+            >
+              {labelOf(u.upstream)}: {u.source === "live" ? `${u.models.length} 实时` : u.source === "free" ? `${u.models.length} 免费` : `${u.models.length} 本地`}
+            </span>
+          ))}
         </div>
         <div className="flex gap-4">
           <label className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer border ${cfg.mode === "auto" ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10" : "border-[var(--color-border)]"}`}>
@@ -864,21 +895,6 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
       {cfg.mode === "auto" && (      <section className="bg-[var(--color-surface)] rounded-xl p-5 border border-[var(--color-border)]">
         <div className="flex items-center gap-2 mb-1">
           <h2 className="font-semibold">auto 模式优先级链</h2>
-          <div className="flex gap-1.5 ml-auto">
-            {available.map((u) => (
-              <span
-                key={u.upstream}
-                className={`text-[10px] px-1.5 py-0.5 rounded ${
-                  u.source === "live"
-                    ? "bg-[var(--color-success)]/20 text-[var(--color-success)]"
-                    : "bg-[var(--color-warning)]/20 text-[var(--color-warning)]"
-                }`}
-                title={u.source === "live" ? "接口实时拉取" : "本地白名单（接口拉取失败或未启用）"}
-              >
-                {labelOf(u.upstream)}: {u.source === "live" ? `${u.models.length} 实时` : u.source === "free" ? `${u.models.length} 免费` : `${u.models.length} 本地`}
-              </span>
-            ))}
-          </div>
         </div>
         <p className="text-xs text-[var(--color-text-dim)] mb-3">
           按顺序尝试，任意一个成功即返回。凭据无效的会被自动跳过。
@@ -1091,9 +1107,9 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
                   <ConfirmPopover
                     title="删除该规则？"
                     onConfirm={() => removeUaRule(rule.id)}
-                    triggerClassName="w-6 h-6 rounded hover:bg-[var(--color-danger)]/20 text-[var(--color-danger)] text-xs shrink-0"
+                    triggerClassName="w-6 h-6 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-dim)] text-xs shrink-0"
                   >
-                    ✕
+                    <TrashIcon />
                   </ConfirmPopover>
                 </div>
 
@@ -1132,9 +1148,9 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
                           <button
                             onClick={() => updateUaRule(rule.id, { defaultTarget: undefined })}
                             title="清除默认目标（回退 UA 全局兜底）"
-                            className="w-5 h-5 rounded hover:bg-[var(--color-danger)]/20 text-[var(--color-danger)]"
+                            className="w-5 h-5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-dim)]"
                           >
-                            ✕
+                            <TrashIcon />
                           </button>
                         )}
                         {!has && (
@@ -1156,9 +1172,9 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
                         <code className="font-mono">{m.target.model}</code>
                         <button
                           onClick={() => removeUaMapping(rule.id, idx)}
-                          className="ml-auto w-5 h-5 rounded hover:bg-[var(--color-danger)]/20 text-[var(--color-danger)]"
+                          className="ml-auto w-5 h-5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-dim)]"
                         >
-                          ✕
+                          <TrashIcon />
                         </button>
                       </div>
                     ))}

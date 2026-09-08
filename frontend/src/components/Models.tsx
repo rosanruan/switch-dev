@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { ModelService } from "../../bindings/switchdev/service";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ModelService, ConfigService } from "../../bindings/switchdev/service";
 import type { ModelDetail, AllCredStatus } from "../../bindings/switchdev/service/models";
 import type { Config } from "../../bindings/switchdev/config/models";
+import { useWailsEvent } from "../hooks/useWailsEvent";
 
 const UPSTREAM_LABEL: Record<string, string> = {
   joycode: "JoyCode",
@@ -26,21 +27,54 @@ function upstreamDisplayName(upstream: string, creds: AllCredStatus | null): str
 export default function Models({ config, creds }: { config: Config | null; creds: AllCredStatus | null }) {
   const [models, setModels] = useState<ModelDetail[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // 过滤状态
   const [activeUpstream, setActiveUpstream] = useState<string>(""); // "" = 全部
 
-  useEffect(() => {
-    ModelService.GetModels()
-      .then((m) =>
+  const load = useCallback(
+    () =>
+      ModelService.GetModels().then((m) =>
         setModels(
           (m ?? [])
             .filter((x): x is ModelDetail => x !== null)
             .filter((x) => x.upstream !== "opencode")
         )
-      )
-      .finally(() => setLoading(false));
-  }, []);
+      ),
+    []
+  );
+
+  useEffect(() => {
+    load().finally(() => setLoading(false));
+  }, [load]);
+
+  // 目录刷新/供应商变更后重新拉取
+  useWailsEvent("models:change", () => {
+    load();
+  });
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await ConfigService.RefreshModels();
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // 各上游模型来源（live=接口实时/DB 回读，local=本地种子白名单）
+  const sourceByUpstream = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const model of models) {
+      if (model.upstream === "auto") continue;
+      // 同上游内只要有一个 live 就算 live
+      if (model.source === "live" || !m.has(model.upstream)) {
+        m.set(model.upstream, model.source || "local");
+      }
+    }
+    return m;
+  }, [models]);
 
   // 当前配置选中的模型集合
   const selectedSet = useMemo(() => {
@@ -153,7 +187,7 @@ export default function Models({ config, creds }: { config: Config | null; creds
         </section>
       )}
 
-      {/* 过滤工具栏：上游标签（放不下自动换行） */}
+      {/* 过滤工具栏：上游标签（放不下自动换行）+ 刷新 */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <UpstreamChip
           label="全部"
@@ -173,6 +207,44 @@ export default function Models({ config, creds }: { config: Config | null; creds
             }
           />
         ))}
+        <button
+          onClick={refresh}
+          disabled={refreshing}
+          title="从上游接口重新拉取模型列表（结果会持久化，重启后仍可用）"
+          className="ml-auto px-3 py-1.5 rounded-lg text-xs bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] border border-[var(--color-border)] disabled:opacity-50"
+        >
+          {refreshing ? "刷新中..." : "🔄 刷新模型"}
+        </button>
+      </div>
+
+      {/* 各上游模型来源徽章 */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {upstreamOptions.map((o) => {
+          const src = sourceByUpstream.get(o.upstream) ?? "local";
+          const isLive = src === "live";
+          const isFree = src === "free";
+          return (
+            <span
+              key={o.upstream}
+              title={
+                isLive
+                  ? "接口实时拉取（已持久化）"
+                  : isFree
+                    ? "第三方供应商已验证模型"
+                    : "本地内置白名单（接口拉取失败或该上游无模型接口）"
+              }
+              className={`text-[11px] px-2 py-0.5 rounded ${
+                isLive
+                  ? "bg-[var(--color-success)]/15 text-[var(--color-success)]"
+                  : isFree
+                    ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)]"
+                    : "bg-[var(--color-warning)]/15 text-[var(--color-warning)]"
+              }`}
+            >
+              {o.label}: {isLive ? "实时" : isFree ? "免费" : "本地"}
+            </span>
+          );
+        })}
       </div>
 
       <div className="text-xs text-[var(--color-text-dim)] h-4 leading-4">

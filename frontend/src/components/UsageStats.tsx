@@ -23,6 +23,12 @@ function startOfWeek(d: Date): Date {
   const day = d.getDay() || 7;
   return dateAddDays(d, 1 - day);
 }
+function endOfWeek(d: Date): Date {
+  return dateAddDays(startOfWeek(d), 6);
+}
+function endOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+}
 
 export default function UsageStats() {
   const [range, setRange] = useState<Range>("week");
@@ -43,10 +49,10 @@ export default function UsageStats() {
       return { start: yStr, end: yStr };
     }
     if (range === "week") {
-      return { start: fmtDate(startOfWeek(today)), end: todayStr };
+      return { start: fmtDate(startOfWeek(today)), end: fmtDate(endOfWeek(today)) };
     }
     if (range === "month") {
-      return { start: fmtDate(new Date(today.getFullYear(), today.getMonth(), 1)), end: todayStr };
+      return { start: fmtDate(new Date(today.getFullYear(), today.getMonth(), 1)), end: fmtDate(endOfMonth(today)) };
     }
     // custom
     return { start: customStart || todayStr, end: customEnd || todayStr };

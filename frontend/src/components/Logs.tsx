@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { LogService } from "../../bindings/switchdev/service";
 import type { LogEntry } from "../../bindings/switchdev/proxy/models";
 import ConfirmPopover from "./ConfirmPopover";
@@ -35,6 +35,8 @@ type Range = "today" | "week" | "month";
 
 type Filter = "all" | "success" | "error" | "auth_error" | "fallback";
 
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
+
 // 日期工具（本应用内纯函数，不依赖外部库）
 const pad = (n: number) => String(n).padStart(2, "0");
 function fmtDate(d: Date): string {
@@ -60,9 +62,15 @@ export default function Logs({ logs }: Props) {
     total: 0, success: 0, error: 0, authError: 0, fallback: 0,
   });
   const [loading, setLoading] = useState(false);
+  // 分页：page 从 0 起；pageTotal 是当前范围+筛选下的总条数（后端给）
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const [pageTotal, setPageTotal] = useState(0);
   // 已计入 DB 计数的实时日志 id（loadHistory 时用当前内存日志初始化）；
   // 之后到达的新日志才实时累加，避免与 DB 统计重复计数。
   const countedLiveRef = useRef<Set<string>>(new Set());
+  // 已并入实时列表的日志 id（page 0 去重用，避免多次 effect 重复插入）
+  const mergedLiveRef = useRef<Set<string>>(new Set());
   // 始终指向最新内存日志，供 loadHistory 初始化游标用（不进依赖，避免频繁重载）
   const logsRef = useRef<LogEntry[]>(logs);
   logsRef.current = logs;
@@ -81,17 +89,24 @@ export default function Logs({ logs }: Props) {
     return { start: fmtDate(start), end: todayStr };
   }, [range]);
 
-  // 拉取历史日志（按范围）+ 该范围内各状态计数
+  // 拉取当前页日志（按范围 + 状态筛选，均下推到 SQL）+ 该范围内各状态计数
   const loadHistory = useCallback(async () => {
     setLoading(true);
     try {
       const { start, end } = calcRange();
-      const [list, statusCounts, dates] = await Promise.all([
-        LogService.GetLogsByRange(start, end, 500),
+      const status = filter === "all" ? "" : filter;
+      const [pageData, statusCounts, dates] = await Promise.all([
+        LogService.GetLogPage(start, end, status, pageSize, page * pageSize),
         LogService.LogCountsByRange(start, end),
         LogService.GetLogDates(),
       ]);
-      setHistory((list ?? []).filter((l): l is LogEntry => l !== null));
+      setHistory((pageData?.logs ?? []).filter((l): l is LogEntry => l !== null));
+      setPageTotal(pageData?.total ?? 0);
+      // 后端会在 offset 越界时回退到末页，前端页码要跟上，避免翻页按钮状态错乱
+      if (pageData && pageData.limit > 0) {
+        const serverPage = Math.floor(pageData.offset / pageData.limit);
+        if (serverPage !== page) setPage(serverPage);
+      }
       setAvailableDates((dates ?? []).filter((d): d is string => d !== null));
       const sc = statusCounts ?? {};
       setCounts({
@@ -104,27 +119,48 @@ export default function Logs({ logs }: Props) {
       // 当前内存里的实时日志（DB 查询时基本已落库）标记为"已计数"，
       // 之后到达的新日志才在实时 effect 里累加，避免与 DB 统计重复。
       countedLiveRef.current = new Set(logsRef.current.map((l) => l.id));
+      // 本页已由 SQL 给出，实时并入游标重置为本页内容
+      mergedLiveRef.current = new Set((pageData?.logs ?? []).map((l) => l?.id ?? ""));
     } catch (e) {
       console.error("加载日志失败", e);
     } finally {
       setLoading(false);
     }
-  }, [calcRange]);
+  }, [calcRange, filter, page, pageSize]);
 
-  // range 变化时重新加载
+  // range/filter/page/pageSize 任一变化都重新加载（分页与筛选都在后端做）
   useEffect(() => {
     loadHistory();
-  }, [loadHistory, range]);
+  }, [loadHistory]);
 
-  // 实时新日志（当前范围是今天时合并，并即时累加计数）
+  // 切范围或换筛选时回到第一页（否则会停在新条件下不存在的页码上）
+  useEffect(() => {
+    setPage(0);
+  }, [range, filter, pageSize]);
+
+  // 翻页后展开的行已不在当前页，收起避免残留
+  useEffect(() => {
+    setExpandedId(null);
+  }, [page, pageSize, range, filter]);
+
+  // 实时新日志：只在「今天 + 第一页」时并入列表，其它页码/范围下并入会打乱分页顺序。
+  // 计数不受此限制 —— 筛选按钮上的数字始终反映最新状态。
   useEffect(() => {
     if (range !== "today" || logs.length === 0) return;
-    // 列表去重（DB 载入的行用数字 id，实时日志用 log-xxx id，不能据此判断是否已计数）
-    setHistory((prev) => {
-      const ids = new Set(prev.map((l) => l.id));
-      const fresh = logs.filter((l) => !ids.has(l.id));
-      return [...fresh, ...prev].slice(0, 500);
-    });
+
+    if (page === 0) {
+      const status = filter === "all" ? null : filter;
+      const merged = mergedLiveRef.current;
+      const fresh = logs.filter(
+        (l) => !merged.has(l.id) && (status === null || l.status === status)
+      );
+      if (fresh.length > 0) {
+        fresh.forEach((l) => merged.add(l.id));
+        setHistory((prev) => [...fresh, ...prev].slice(0, pageSize));
+        setPageTotal((prev) => prev + fresh.length);
+      }
+    }
+
     // 计数：只累加 loadHistory 之后新到达、尚未计过的日志
     const counted = countedLiveRef.current;
     const toCount = logs.filter((l) => !counted.has(l.id));
@@ -140,14 +176,30 @@ export default function Logs({ logs }: Props) {
       });
       return next;
     });
-  }, [logs, range]);
+  }, [logs, range, page, pageSize, filter]);
 
-  const filtered =
-    filter === "all" ? history : history.filter((l) => l.status === filter);
+  // 列表已按筛选条件从后端取回，不再二次过滤
+  const filtered = history;
+  const totalPages = Math.max(1, Math.ceil(pageTotal / pageSize));
+
+  // 本页内各状态计数（已加载的 history 就是当前页数据）
+  const pageCounts = useMemo(() => {
+    const c: StatusCounts = { total: 0, success: 0, error: 0, authError: 0, fallback: 0 };
+    for (const l of history) {
+      c.total++;
+      if (l.status === "success") c.success++;
+      else if (l.status === "error") c.error++;
+      else if (l.status === "auth_error") c.authError++;
+      else if (l.status === "fallback") c.fallback++;
+    }
+    return c;
+  }, [history]);
 
   const clear = async () => {
     await LogService.ClearLogs();
     setHistory([]);
+    setPage(0);
+    setPageTotal(0);
     setCounts({ total: 0, success: 0, error: 0, authError: 0, fallback: 0 });
   };
 
@@ -180,13 +232,14 @@ export default function Logs({ logs }: Props) {
         </div>
       </div>
 
-      {/* 状态筛选 + 统计 */}
+      {/* 状态筛选 + 统计（前面本页，后面全范围） */}
       <div className="flex items-center gap-2 flex-wrap">
-        <FilterBtn label="全部" count={counts.total} active={filter === "all"} onClick={() => setFilter("all")} color="text-[var(--color-text)]" />
-        <FilterBtn label="成功" count={counts.success} active={filter === "success"} onClick={() => setFilter("success")} color="text-[var(--color-success)]" />
-        <FilterBtn label="错误" count={counts.error} active={filter === "error"} onClick={() => setFilter("error")} color="text-[var(--color-warning)]" />
-        <FilterBtn label="鉴权失败" count={counts.authError} active={filter === "auth_error"} onClick={() => setFilter("auth_error")} color="text-[var(--color-danger)]" />
-        <FilterBtn label="降级" count={counts.fallback} active={filter === "fallback"} onClick={() => setFilter("fallback")} color="text-[var(--color-text-dim)]" />
+        <FilterBtn label="全部" pageCount={pageCounts.total} total={counts.total} active={filter === "all"} onClick={() => setFilter("all")} color="text-[var(--color-text)]" />
+        <FilterBtn label="成功" pageCount={pageCounts.success} total={counts.success} active={filter === "success"} onClick={() => setFilter("success")} color="text-[var(--color-success)]" />
+        <FilterBtn label="错误" pageCount={pageCounts.error} total={counts.error} active={filter === "error"} onClick={() => setFilter("error")} color="text-[var(--color-warning)]" />
+        <FilterBtn label="鉴权失败" pageCount={pageCounts.authError} total={counts.authError} active={filter === "auth_error"} onClick={() => setFilter("auth_error")} color="text-[var(--color-danger)]" />
+        <FilterBtn label="降级" pageCount={pageCounts.fallback} total={counts.fallback} active={filter === "fallback"} onClick={() => setFilter("fallback")} color="text-[var(--color-text-dim)]" />
+        <span className="text-xs text-[var(--color-text-dim)] ml-1">本页 / 全范围</span>
       </div>
 
       {/* 日志列表 */}
@@ -211,7 +264,7 @@ export default function Logs({ logs }: Props) {
             {loading ? "加载中..." : "该时间范围暂无日志"}
           </div>
         ) : (
-          <div className="divide-y divide-[var(--color-border)] max-h-[calc(100vh-320px)] overflow-y-auto">
+          <div className="divide-y divide-[var(--color-border)]">
             {filtered.map((log) => (
               <LogRow
                 key={log.id}
@@ -223,6 +276,59 @@ export default function Logs({ logs }: Props) {
             ))}
           </div>
         )}
+
+        {/* 分页 */}
+        <div className="flex items-center gap-3 px-4 py-3 border-t border-[var(--color-border)] text-sm flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-[var(--color-text-dim)]">每页</span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="px-2 py-1 text-xs rounded bg-[var(--color-surface-2)] border border-[var(--color-border)]"
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+          <span className="text-xs text-[var(--color-text-dim)]">
+            共 {pageTotal} 条
+            {pageTotal > 0 && `，第 ${page * pageSize + 1}-${Math.min((page + 1) * pageSize, pageTotal)} 条`}
+          </span>
+          <div className="flex items-center gap-2 ml-auto">
+            <button
+              onClick={() => setPage(0)}
+              disabled={page === 0 || loading}
+              className="px-2 py-1 text-xs rounded bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] disabled:opacity-30"
+            >
+              « 首页
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0 || loading}
+              className="px-2 py-1 text-xs rounded bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] disabled:opacity-30"
+            >
+              上一页
+            </button>
+            <span className="text-xs text-[var(--color-text-dim)] font-mono">
+              {page + 1} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page >= totalPages - 1 || loading}
+              className="px-2 py-1 text-xs rounded bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] disabled:opacity-30"
+            >
+              下一页
+            </button>
+            <button
+              onClick={() => setPage(totalPages - 1)}
+              disabled={page >= totalPages - 1 || loading}
+              className="px-2 py-1 text-xs rounded bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] disabled:opacity-30"
+            >
+              末页 »
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* 历史日期提示 */}
@@ -257,13 +363,15 @@ function RangeBtn({ label, active, onClick }: { label: string; active: boolean; 
 
 function FilterBtn({
   label,
-  count,
+  pageCount,
+  total,
   active,
   onClick,
   color,
 }: {
   label: string;
-  count: number;
+  pageCount: number;
+  total: number;
   active: boolean;
   onClick: () => void;
   color: string;
@@ -271,12 +379,16 @@ function FilterBtn({
   return (
     <button
       onClick={onClick}
+      title={`本页 ${pageCount} 条 / 当前时间范围共 ${total} 条`}
       className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-2 transition-colors ${
         active ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
       }`}
     >
       <span>{label}</span>
-      <span className={`font-mono text-xs ${active ? "text-white/80" : color}`}>{count}</span>
+      <span className={`font-mono text-xs ${active ? "text-white/80" : color}`}>
+        {pageCount}
+        <span className={active ? "text-white/50" : "text-[var(--color-text-dim)]"}>/{total}</span>
+      </span>
     </button>
   );
 }

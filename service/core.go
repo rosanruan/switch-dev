@@ -9,8 +9,8 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"switchdev/creds"
 	"switchdev/config"
+	"switchdev/creds"
 	"switchdev/db"
 	"switchdev/proxy"
 	"switchdev/upstream"
@@ -18,8 +18,8 @@ import (
 
 // Core 共享核心：持有代理服务、三上游、日志存储，并实现 proxy.EventLogger
 type Core struct {
-	mu       sync.RWMutex
-	server   *proxy.Server
+	mu        sync.RWMutex
+	server    *proxy.Server
 	joycode   *upstream.JoyCodeUpstream
 	deveco    *upstream.DevEcoUpstream
 	opencode  *upstream.OpenCodeUpstream
@@ -39,11 +39,11 @@ type Core struct {
 	logMaxLen int
 
 	// 统计
-	statsMu      sync.RWMutex
-	totalReqs    int64
-	successReqs  int64
-	errorReqs    int64
-	authErrReqs  int64
+	statsMu     sync.RWMutex
+	totalReqs   int64
+	successReqs int64
+	errorReqs   int64
+	authErrReqs int64
 }
 
 func NewCore() *Core {
@@ -109,9 +109,24 @@ func (c *Core) Setup(
 // Server 暴露代理服务
 func (c *Core) Server() *proxy.Server { return c.server }
 
-// Upstreams 暴露四上游适配器（供 ConfigService 拉取模型列表）
+// Upstreams 暴露四上游适配器（供 ConfigService 拉取模型列表）。
+// Setup 未调用时字段是 nil 的具体类型指针，直接返回会得到「非 nil 接口包着 nil 指针」，
+// 调用方的 u == nil 判空拦不住，方法里解引用就 panic。这里显式转成 nil 接口。
 func (c *Core) Upstreams() (upstream.Upstream, upstream.Upstream, upstream.Upstream, upstream.Upstream) {
-	return c.joycode, c.deveco, c.opencode, c.workbuddy
+	var jy, de, oc, wb upstream.Upstream
+	if c.joycode != nil {
+		jy = c.joycode
+	}
+	if c.deveco != nil {
+		de = c.deveco
+	}
+	if c.opencode != nil {
+		oc = c.opencode
+	}
+	if c.workbuddy != nil {
+		wb = c.workbuddy
+	}
+	return jy, de, oc, wb
 }
 
 // ====== proxy.EventLogger 实现 ======
@@ -212,10 +227,10 @@ func (c *Core) GetLogStats() *LogStats {
 
 // AllCredStatus 四上游 + 免费 API 凭据状态
 type AllCredStatus struct {
-	JoyCode  *creds.CredStatusInfo          `json:"joycode"`
-	DevEco   *creds.CredStatusInfo          `json:"deveco"`
-	OpenCode *creds.CredStatusInfo          `json:"opencode"`
-	WorkBuddy *creds.CredStatusInfo         `json:"workbuddy"`
+	JoyCode      *creds.CredStatusInfo            `json:"joycode"`
+	DevEco       *creds.CredStatusInfo            `json:"deveco"`
+	OpenCode     *creds.CredStatusInfo            `json:"opencode"`
+	WorkBuddy    *creds.CredStatusInfo            `json:"workbuddy"`
 	ProviderAPIs map[string]*creds.CredStatusInfo `json:"providerAPIs,omitempty"` // 免费 API 供应商（动态）
 }
 

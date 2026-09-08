@@ -17,9 +17,13 @@ type aggregatedChoice struct {
 }
 
 type aggregatedMessage struct {
-	Role      string               `json:"role"`
-	Content   string               `json:"content"`
-	ToolCalls []aggregatedToolCall `json:"tool_calls,omitempty"`
+	Role string `json:"role"`
+	// ReasoningContent 推理模型的思维链。上游放在 delta.reasoning_content 里，
+	// 与 Content 分开累加；json tag 与 proxy.OpenAIMessage 一致，
+	// 上层 OpenAIToAnthropic 会把它渲染成独立 text block。
+	ReasoningContent string               `json:"reasoning_content,omitempty"`
+	Content          string               `json:"content"`
+	ToolCalls        []aggregatedToolCall `json:"tool_calls,omitempty"`
 }
 
 type aggregatedToolCall struct {
@@ -77,9 +81,10 @@ func aggregateOpenAISSE(r io.Reader) ([]byte, error) {
 			Choices []struct {
 				Index int `json:"index"`
 				Delta struct {
-					Role      string `json:"role"`
-					Content   string `json:"content"`
-					ToolCalls []struct {
+					Role             string `json:"role"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+					ToolCalls        []struct {
 						Index    int    `json:"index"`
 						ID       string `json:"id"`
 						Type     string `json:"type"`
@@ -110,6 +115,7 @@ func aggregateOpenAISSE(r io.Reader) ([]byte, error) {
 		if len(chunk.Choices) > 0 {
 			c := chunk.Choices[0]
 			choice.Message.Content += c.Delta.Content
+			choice.Message.ReasoningContent += c.Delta.ReasoningContent
 			if c.Delta.Role != "" {
 				choice.Message.Role = c.Delta.Role
 			}

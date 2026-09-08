@@ -170,6 +170,9 @@ func main() {
 	modelSvc := service.NewModelService(core)
 	logSvc := service.NewLogService(core)
 	cfgSvc := service.NewConfigServiceWithCore(cfgMgr, core)
+	// 从 DB 回读内置上游模型目录并注入 proxy —— 必须在代理开始服务之前，
+	// 这样重启后 /v1/models 和路由层立刻就是上次拉到的最新一份，不必等后台刷新。
+	service.LoadCatalogFromDB(cfgSvc)
 	// 启动时让操作系统自启项与配置一致（用当前可执行路径重新注册，修复路径变更）
 	if err := cfgSvc.ReconcileAutoStart(); err != nil {
 		log.Printf("⚠️ 同步开机自启状态失败: %v", err)
@@ -280,6 +283,9 @@ func main() {
 
 	// 10.6 供应商模型健康监控（每 5 分钟探测；只监控 provider 模型）
 	go providerMonitor.Start(app.Context())
+
+	// 10.7 内置上游模型目录后台刷新（启动延迟一次 + 每 6 小时；结果落库，重启后可直接回读）
+	go service.StartCatalogRefresh(app.Context(), cfgSvc, 6*time.Hour)
 	// 首次刷新注册免费上游 + 模型（启动时构建）
 	registerProviderAPIRefresh(server, providerAPIMgr, providerMonitor, core)
 	// 注入第三方供应商枚举回调：config.Validate 时能精确校验 provider id 是否已注册
@@ -650,6 +656,7 @@ func registerProviderAPIRefresh(server *proxy.Server, mgr *providerapi.Manager, 
 		if core != nil {
 			core.EmitEvent("cred:change", core.GetCredStatus())
 			core.EmitEvent("providerapi:change", service.SanitizeProviders(mgr.GetProviders()))
+			core.EmitEvent("models:change", nil)
 		}
 	}
 	rebuildProviderAPIs = rebuild

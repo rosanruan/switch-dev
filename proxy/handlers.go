@@ -187,7 +187,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	source := sourceFromUA(r.Header.Get("User-Agent"))
 	userAgent := r.Header.Get("User-Agent")
 
-	// 流式：优先尝试真流式（上游支持 StreamCaller，如 WorkBuddy/OpenCode）
+	// 流式：优先尝试真流式（实现 StreamCaller 的上游直传 SSE；未实现的回退伪流式）
 	if stream {
 		sr, upName, usedModel, err := s.callUpstreamStream(r.Context(), &body, userAgent)
 		if sr != nil {
@@ -368,7 +368,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 	source := sourceFromUA(r.Header.Get("User-Agent"))
 	userAgent := r.Header.Get("User-Agent")
 
-	// 流式：优先尝试真流式（上游支持 StreamCaller，如 WorkBuddy/OpenCode）
+	// 流式：优先尝试真流式（实现 StreamCaller 的上游直传 SSE；未实现的回退伪流式）
 	if stream {
 		sr, upName, usedModel, err := s.callUpstreamStream(r.Context(), body, userAgent)
 		if sr != nil {

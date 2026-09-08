@@ -28,6 +28,7 @@ export {
     BenchmarkResult,
     BenchmarkTarget,
     Dashboard,
+    LogPage,
     LogStats,
     ModelDetail,
     ModelOption,

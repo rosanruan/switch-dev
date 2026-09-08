@@ -227,10 +227,14 @@ func (s *Server) executeChainStream(ctx context.Context, body interface{}, chain
 			s.recordSkipLog(requestedModel, ref, "cred_invalid")
 			continue
 		}
-		// 类型断言：只走支持真流式的上游（WorkBuddy/OpenCode）
+		// 类型断言：只走实现了 StreamCaller 的上游（内置 4 上游 + 供应商目前都实现了）。
+		// 未实现的会被跳过，链里下一个上游顶上 —— 记一条日志，否则用户看到
+		// 「配的是 A，实际走了 B」却无从查证。
 		sc, ok := up.(upstream.StreamCaller)
 		if !ok {
-			continue // 不支持流式，跳过（JoyCode/DevEco 走伪流式）
+			fmt.Printf("[switch-dev] 跳过 %s/%s（该上游不支持流式）\n", ref.Upstream, ref.Model)
+			s.recordFallbackLog(requestedModel, ref, "stream_unsupported", "该上游不支持流式，跳过")
+			continue
 		}
 		triedStream = true
 
@@ -389,6 +393,7 @@ func (s *Server) upstreamProtocol(ref ModelRef) string {
 // buildAnthropicOutboundBody 处理入站 Anthropic(/v1/messages) 请求：
 //   - 上游为 anthropic 协议：透传 Anthropic body（只改 model）
 //   - 上游为 openai 协议：转成 OpenAI body
+//
 // stream 参数控制是否在请求中保留 stream:true。非流式时必须设为 false
 // 以避免上游返回 SSE 而非 JSON 响应。
 func (s *Server) buildAnthropicOutboundBody(body *AnthropicRequest, ref ModelRef, stream bool) ([]byte, error) {
@@ -451,24 +456,14 @@ func (s *Server) buildAnthropicOpenAIBody(body *AnthropicRequest, ref ModelRef, 
 }
 
 // buildOpenAIPassthroughBody OpenAI 直通 body -> 注入 model + stream:false
-// DevEco 需要把配置里的 model id 映射成网关认的 upstream 名
+// model 统一经 ActualUpstreamModel 还原成上游认的名字（DevEco 的 wire 名、
+// wb/ 前缀剥离、provider 前缀剥离都在里面）
 func (s *Server) buildOpenAIPassthroughBody(body map[string]interface{}, ref ModelRef) ([]byte, error) {
 	cp := make(map[string]interface{}, len(body)+2)
 	for k, v := range body {
 		cp[k] = v
 	}
-	model := ref.Model
-	if ref.Upstream == "deveco" {
-		if dm := DevEcoModelByID[ref.Model]; dm != nil {
-			model = dm.Upstream
-		}
-	} else if ref.Upstream == "workbuddy" {
-		model = stripWbPrefix(ref.Model)
-	} else if IsProviderModel(ref.Model) {
-		// provider API 模型：还原为原始 model id
-		model = stripProviderPrefix(ref.Model)
-	}
-	cp["model"] = model
+	cp["model"] = ActualUpstreamModel(ref.Model)
 	cp["stream"] = false
 	return json.Marshal(cp)
 }
@@ -476,10 +471,10 @@ func (s *Server) buildOpenAIPassthroughBody(body map[string]interface{}, ref Mod
 // recordFallbackLog 记录降级日志
 func (s *Server) recordFallbackLog(requestedModel string, ref ModelRef, reason, detail string) {
 	entry := &LogEntry{
-		Model:     requestedModel,
-		Upstream:  ref.Upstream,
-		Status:    "fallback",
-		ErrorMsg:  fmt.Sprintf("[%s] %s", reason, detail),
+		Model:    requestedModel,
+		Upstream: ref.Upstream,
+		Status:   "fallback",
+		ErrorMsg: fmt.Sprintf("[%s] %s", reason, detail),
 	}
 	s.recordLog(entry)
 }
@@ -487,10 +482,10 @@ func (s *Server) recordFallbackLog(requestedModel string, ref ModelRef, reason, 
 // recordSkipLog 记录跳过日志
 func (s *Server) recordSkipLog(requestedModel string, ref ModelRef, reason string) {
 	entry := &LogEntry{
-		Model:     requestedModel,
-		Upstream:  ref.Upstream,
-		Status:    "fallback",
-		ErrorMsg:  fmt.Sprintf("[%s] 跳过（凭据无效）", reason),
+		Model:    requestedModel,
+		Upstream: ref.Upstream,
+		Status:   "fallback",
+		ErrorMsg: fmt.Sprintf("[%s] 跳过（凭据无效）", reason),
 	}
 	s.recordLog(entry)
 }
@@ -498,8 +493,8 @@ func (s *Server) recordSkipLog(requestedModel string, ref ModelRef, reason strin
 // nowMillis / incRequests / timestampNow 辅助
 var _counter int64
 
-func nowMillis() int64                   { return atomic.AddInt64(&_counter, 1) }
-func (s *Server) incRequests() int64     { return atomic.AddInt64(&s.requests, 1) }
+func nowMillis() int64               { return atomic.AddInt64(&_counter, 1) }
+func (s *Server) incRequests() int64 { return atomic.AddInt64(&s.requests, 1) }
 
 // cancelReadCloser 包装 io.ReadCloser，在 Close 时同时调用 cancel 释放 context
 type cancelReadCloser struct {
@@ -513,7 +508,7 @@ func (c *cancelReadCloser) Close() error {
 	c.cancel()
 	return err
 }
-func timestampNow() string               { return time.Now().Format("15:04:05") }
+func timestampNow() string { return time.Now().Format("15:04:05") }
 
 // ====== 以下来自旧 router.go（被 handlers.go 引用） ======
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Preset } from "../../bindings/switchdev/config/models";
 import ConfirmPopover from "./ConfirmPopover";
+import TrashIcon from "./TrashIcon";
 
 // PresetSwitcher 运行模式方案下拉 + 保存按钮
 //
@@ -151,8 +152,10 @@ export default function PresetSwitcher({
                         onDelete(p.name);
                         setOpen(false);
                       }}
-                      triggerClassName="w-6 h-6 rounded text-xs opacity-0 group-hover:opacity-100 hover:bg-[var(--color-danger)]/20 text-[var(--color-danger)] shrink-0"
-                    />
+                      triggerClassName="w-6 h-6 rounded text-xs opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-2)] text-[var(--color-text-dim)] shrink-0"
+                    >
+                      <TrashIcon />
+                    </ConfirmPopover>
                   </div>
                 ))
               )}

@@ -12,7 +12,6 @@ import (
 	"switchdev/config"
 	"switchdev/db"
 	"switchdev/proxy"
-	"switchdev/upstream"
 )
 
 // ConfigService 配置管理服务（暴露给前端）
@@ -225,6 +224,7 @@ func (s *ConfigService) invalidateModelCache() {
 }
 
 // RefreshModels 强制刷新模型列表（忽略缓存）
+// 同时刷新内置上游的持久化目录，让 /v1/models 和路由层也拿到最新模型
 func (s *ConfigService) RefreshModels() []UpstreamModels {
 	s.modelsMu.Lock()
 	s.modelsCache = nil
@@ -233,6 +233,7 @@ func (s *ConfigService) RefreshModels() []UpstreamModels {
 	if s.core == nil {
 		return localOnlyModels()
 	}
+	s.refreshCatalog(context.Background())
 	result := s.fetchAllModels()
 	s.modelsMu.Lock()
 	s.modelsCache = result
@@ -243,37 +244,11 @@ func (s *ConfigService) RefreshModels() []UpstreamModels {
 
 // fetchAllModels 并发拉取四上游模型，合并本地映射 + 供应商模型，返回结果
 func (s *ConfigService) fetchAllModels() []UpstreamModels {
-	jy, de, oc, wb := s.core.Upstreams()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	results := s.fetchUpstreamModels(ctx)
 
-	type fetchResult struct {
-		upstream string
-		models   []upstream.FetchedModel
-		ok       bool
-	}
-
-	results := make([]fetchResult, 4)
-	var wg sync.WaitGroup
-
-	doFetch := func(idx int, name string, u upstream.Upstream) {
-		defer wg.Done()
-		if u == nil {
-			results[idx] = fetchResult{upstream: name}
-			return
-		}
-		fetched, err := u.FetchModels(ctx)
-		results[idx] = fetchResult{upstream: name, models: fetched, ok: err == nil}
-	}
-
-	wg.Add(4)
-	go doFetch(0, "joycode", jy)
-	go doFetch(1, "deveco", de)
-	go doFetch(2, "opencode", oc)
-	go doFetch(3, "workbuddy", wb)
-	wg.Wait()
-
-	out := make([]UpstreamModels, 0, 4)
+	out := make([]UpstreamModels, 0, len(results)+1)
 	for _, r := range results {
 		merged := proxy.MergeModels(r.upstream, r.models, r.ok)
 		opts := make([]ModelOption, 0, len(merged))
@@ -286,7 +261,7 @@ func (s *ConfigService) fetchAllModels() []UpstreamModels {
 				Stream:    m.Stream,
 				Vision:    m.Vision,
 				ToolCall:  m.ToolCall,
-				Reasoning: false,
+				Reasoning: m.Reasoning,
 				Free:      m.Free,
 			})
 		}
@@ -305,7 +280,7 @@ func (s *ConfigService) fetchAllModels() []UpstreamModels {
 // providerAPIModelsGrouped 把已注册的免费模型按 provider 分组为 UpstreamModels
 func providerAPIModelsGrouped() []UpstreamModels {
 	grouped := map[string][]ModelOption{}
-	for _, fm := range proxy.ProviderModels {
+	for _, fm := range proxy.ProviderModelList() {
 		grouped[fm.ProviderID] = append(grouped[fm.ProviderID], ModelOption{
 			ID:       fm.InternalID,
 			Label:    fm.Label,
@@ -322,46 +297,41 @@ func providerAPIModelsGrouped() []UpstreamModels {
 	return out
 }
 
-// localOnlyModels 纯本地白名单（core 未注入时用）
+// localOnlyModels 目录快照（core 未注入时用；目录本身已含种子兜底）
 func localOnlyModels() []UpstreamModels {
-	return []UpstreamModels{
-		{Upstream: "joycode", Source: "local", Models: modelOptionsJoyCode()},
-		{Upstream: "deveco", Source: "local", Models: modelOptionsDevEco()},
-		{Upstream: "opencode", Source: "local", Models: modelOptionsOpenCode()},
-		{Upstream: "workbuddy", Source: "local", Models: modelOptionsWorkBuddy()},
+	out := make([]UpstreamModels, 0, 4)
+	for _, up := range []string{"joycode", "deveco", "opencode", "workbuddy"} {
+		out = append(out, UpstreamModels{
+			Upstream: up,
+			Source:   catalogSource(up),
+			Models:   catalogOptions(up),
+		})
 	}
+	return out
 }
 
-func modelOptionsJoyCode() []ModelOption {
-	opts := make([]ModelOption, 0, len(proxy.JoyCodeModels))
-	for _, m := range proxy.JoyCodeModels {
-		opts = append(opts, ModelOption{ID: m.ID, Label: m.Label, Output: m.OutputMaxTokens, Stream: m.Stream, ToolCall: true, Free: m.Free})
+// catalogOptions 取某上游目录条目的前端选项
+func catalogOptions(upstreamName string) []ModelOption {
+	models := proxy.CatalogModelsByUpstream(upstreamName)
+	opts := make([]ModelOption, 0, len(models))
+	for _, m := range models {
+		opts = append(opts, ModelOption{
+			ID: m.ID, Label: m.Label, Context: m.Context, Output: m.Output,
+			Stream: m.Stream, Vision: m.Vision, ToolCall: m.ToolCall,
+			Reasoning: m.Reasoning, Free: m.Free,
+		})
 	}
 	return opts
 }
 
-func modelOptionsDevEco() []ModelOption {
-	opts := make([]ModelOption, 0, len(proxy.DevEcoModels))
-	for _, m := range proxy.DevEcoModels {
-		opts = append(opts, ModelOption{ID: m.ID, Label: m.Label, Context: m.Context, Output: m.Output, Stream: true, ToolCall: true, Free: m.Free})
+// catalogSource 某上游目录里是否含实时数据（任一条目 Live 即视为 live）
+func catalogSource(upstreamName string) string {
+	for _, m := range proxy.CatalogModelsByUpstream(upstreamName) {
+		if m.Live {
+			return "live"
+		}
 	}
-	return opts
-}
-
-func modelOptionsOpenCode() []ModelOption {
-	opts := make([]ModelOption, 0, len(proxy.OpenCodeModels))
-	for _, m := range proxy.OpenCodeModels {
-		opts = append(opts, ModelOption{ID: m.ID, Label: m.Label, Context: m.Context, Output: m.Output, Stream: true, ToolCall: true, Free: m.Free})
-	}
-	return opts
-}
-
-func modelOptionsWorkBuddy() []ModelOption {
-	opts := make([]ModelOption, 0, len(proxy.WorkBuddyModels))
-	for _, m := range proxy.WorkBuddyModels {
-		opts = append(opts, ModelOption{ID: m.ID, Label: m.Label, Context: m.Context, Output: m.Output, Stream: true, Vision: m.Vision, ToolCall: m.ToolCall, Free: m.Free})
-	}
-	return opts
+	return "local"
 }
 
 // GetUASources 列出所有已知的请求来源（User-Agent），用于 UA 路由配置辅助

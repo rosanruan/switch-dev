@@ -133,6 +133,7 @@ var WorkBuddyModels = []WorkBuddyModel{
 	{ID: "wb/hunyuan-2.0-thinking", Label: "Hunyuan-2.0-Thinking (WorkBuddy)", Output: 16000, ToolCall: true, Reasoning: true},
 	{ID: "wb/hunyuan-2.0-instruct", Label: "Hunyuan-2.0-Instruct (WorkBuddy)", Output: 24000, ToolCall: true},
 	{ID: "wb/hy3", Label: "Hunyuan Hy3 (WorkBuddy)", Output: 32000, Vision: true, ToolCall: true, Reasoning: true, Free: true},
+	{ID: "wb/hy4-preview", Label: "Hy4 Preview (WorkBuddy)", Output: 32000, Vision: true, ToolCall: true, Reasoning: true},
 }
 
 var WorkBuddyModelIDs map[string]bool
@@ -173,12 +174,10 @@ type ProviderModel struct {
 // ProviderModelHealth 查询 provider 模型健康状态的回调（由 main 注入，避免 proxy 依赖 providerapi 包）
 var ProviderModelHealth func(providerID, modelID string) bool
 
-// ProviderModels 已注册的免费模型（动态，随 provider 增删变化）
-var ProviderModels []ProviderModel
-
 // SetProviderModels 更新免费模型列表（provider 增删/切换时由 main 调用）
+// 经原子指针发布，供 ProviderModelList() 读取
 func SetProviderModels(models []ProviderModel) {
-	ProviderModels = models
+	providerModelsPtr.Store(&models)
 }
 
 // IsProviderModelHealthy 查询 provider 模型健康状态（权重降级用）；非 provider 模型或未配置返回 true
@@ -241,8 +240,8 @@ func ActualUpstreamModel(internalID string) string {
 	if len(internalID) >= 3 && internalID[:3] == "wb/" {
 		return stripWbPrefix(internalID)
 	}
-	if dm := DevEcoModelByID[internalID]; dm != nil && dm.Upstream != "" {
-		return dm.Upstream
+	if m, ok := LookupModel(internalID); ok && m.WireName != "" {
+		return m.WireName
 	}
 	return internalID
 }
@@ -259,45 +258,26 @@ func ResolveModel(requestedModel string) string {
 	if IsProviderModel(requestedModel) {
 		return requestedModel
 	}
-	if WorkBuddyModelIDs[requestedModel] {
+	if _, ok := LookupModel(requestedModel); ok {
 		return requestedModel
 	}
-	if OpenCodeModelIDs[requestedModel] {
-		return requestedModel
-	}
-	if DevEcoModelIDs[requestedModel] {
-		return requestedModel
-	}
-	if id, ok := DevEcoLabelToID[lower(requestedModel)]; ok {
-		return id
-	}
-	if JoyCodeModelIDs[requestedModel] {
-		return requestedModel
-	}
-	if id, ok := JoyCodeLabelToID[lower(requestedModel)]; ok {
+	if id, ok := lookupByAlias(requestedModel); ok {
 		return id
 	}
 	return requestedModel
 }
 
 // IsKnownModel 判断客户端发来的 model 名能否被识别为某个已知上游模型
-// （含 label 反查）。auto/manual 降级链据此决定链首用请求模型还是 GlobalFallback。
+// （含 label/wire 名反查）。auto/manual 降级链据此决定链首用请求模型还是 GlobalFallback。
 func IsKnownModel(requestedModel string) bool {
 	if requestedModel == "" || IsProviderModel(requestedModel) {
 		return requestedModel != ""
 	}
-	if WorkBuddyModelIDs[requestedModel] || OpenCodeModelIDs[requestedModel] ||
-		DevEcoModelIDs[requestedModel] || JoyCodeModelIDs[requestedModel] {
+	if _, ok := LookupModel(requestedModel); ok {
 		return true
 	}
-	low := lower(requestedModel)
-	if _, ok := DevEcoLabelToID[low]; ok {
-		return true
-	}
-	if _, ok := JoyCodeLabelToID[low]; ok {
-		return true
-	}
-	return false
+	_, ok := lookupByAlias(requestedModel)
+	return ok
 }
 
 // ResolveUpstream 判断 model 走哪个上游
@@ -310,27 +290,15 @@ func ResolveUpstream(model string) string {
 			return pid
 		}
 	}
-	if WorkBuddyModelIDs[m] {
-		return "workbuddy"
-	}
-	if OpenCodeModelIDs[m] {
-		return "opencode"
-	}
-	if DevEcoModelIDs[m] {
-		return "deveco"
+	if cm, ok := LookupModel(m); ok {
+		return cm.Upstream
 	}
 	return "joycode"
 }
 
 // modelContextLimit 返回模型 context 窗口上限（token），用于 usage 合理性校验；未知返回 0
 func modelContextLimit(modelID string) int {
-	if m := WorkBuddyModelByID[modelID]; m != nil {
-		return m.Context
-	}
-	if m := OpenCodeModelByID[modelID]; m != nil {
-		return m.Context
-	}
-	if m := DevEcoModelByID[modelID]; m != nil {
+	if m, ok := LookupModel(modelID); ok {
 		return m.Context
 	}
 	return 0
@@ -365,6 +333,11 @@ type ModelInfo struct {
 	Vision   bool   `json:"_vision,omitempty"`
 	ToolCall bool   `json:"_toolCall,omitempty"`
 	Free     bool   `json:"_free,omitempty"` // 限时免费标识
+	// Reasoning 是否推理模型（接口拉取/种子提供，供前端与目录同步使用）
+	Reasoning bool `json:"_reasoning,omitempty"`
+	// Wire 发往上游 base_url 的真实 model 名（DevEco 的 id 与 wire 名不同）。
+	// 不出现在 /v1/models 响应里，仅供目录同步内部使用。
+	Wire string `json:"-"`
 }
 
 func lower(s string) string {

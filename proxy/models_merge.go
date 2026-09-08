@@ -15,7 +15,8 @@ func MergeModels(upstreamName string, fetched []upstream.FetchedModel, fetchOK b
 
 	// OpenCode 只展示 free 模型（非 free 的需付费/会员，代理不接入）
 	if upstreamName == "opencode" && fetchOK {
-		filtered := fetched[:0]
+		// 新建 slice，不能用 fetched[:0] —— 那会原地改写调用方入参的底层数组
+		filtered := make([]upstream.FetchedModel, 0, len(fetched))
 		for _, fm := range fetched {
 			if isFreeModel(fm.ID) {
 				filtered = append(filtered, fm)
@@ -28,16 +29,20 @@ func MergeModels(upstreamName string, fetched []upstream.FetchedModel, fetchOK b
 		// 接口拉取成功：以接口模型为主，本地映射补充元数据
 		for _, fm := range fetched {
 			mi := ModelInfo{
-				ID:       fm.ID,
-				Label:    fm.Label,
-				Upstream: upstreamName,
-				Stream:   fm.Stream,
-				Context:  fm.Context,
-				Output:   fm.Output,
-				Vision:   fm.Vision,
-				ToolCall: fm.ToolCall,
-				Object:   "model",
-				Created:  1700000000,
+				ID:        fm.ID,
+				Label:     fm.Label,
+				Upstream:  upstreamName,
+				Stream:    fm.Stream,
+				Context:   fm.Context,
+				Output:    fm.Output,
+				Vision:    fm.Vision,
+				ToolCall:  fm.ToolCall,
+				Reasoning: fm.Reasoning,
+				Object:    "model",
+				Created:   1700000000,
+				// 接口返回的 ID 就是发往上游的真实 model 名。必须在 applyLocalMeta
+				// 之前记下来 —— DevEco 分支会把 mi.ID 覆写成本地内部 id（GLM-5.1 -> glm-5.1）。
+				Wire: fm.ID,
 			}
 
 			// 用本地映射表补充/修正元数据
@@ -108,7 +113,12 @@ func applyLocalMeta(mi *ModelInfo, upstreamName string) {
 			mi.Free = lm.Free
 		}
 	case "workbuddy":
-		// WorkBuddy 无实时接口，本地白名单即完整数据
+		// 动态拉取的模型加 wb/ 前缀（种子模型已有），
+		// 确保路由层能识别为 WorkBuddy 模型。
+		if !strings.HasPrefix(mi.ID, "wb/") {
+			mi.ID = "wb/" + mi.ID
+		}
+		// Wire 已在 MergeModels 中设为 fm.ID（无前缀），无需再改。
 		if lm := WorkBuddyModelByID[mi.ID]; lm != nil {
 			if mi.Label == "" || mi.Label == mi.ID {
 				mi.Label = lm.Label
@@ -121,6 +131,7 @@ func applyLocalMeta(mi *ModelInfo, upstreamName string) {
 			}
 			mi.Vision = lm.Vision
 			mi.ToolCall = lm.ToolCall
+			mi.Reasoning = lm.Reasoning
 			mi.Free = lm.Free
 		}
 	}
@@ -133,7 +144,7 @@ func localModels(upstreamName string) []ModelInfo {
 		var r []ModelInfo
 		for _, m := range JoyCodeModels {
 			r = append(r, ModelInfo{
-				ID: m.ID, Label: m.Label, Upstream: "joycode",
+				ID: m.ID, Label: m.Label, Upstream: "joycode", Wire: m.ID,
 				Stream: m.Stream, Output: m.OutputMaxTokens, ToolCall: true,
 				Free: m.Free, Object: "model", Created: 1700000000,
 			})
@@ -143,7 +154,7 @@ func localModels(upstreamName string) []ModelInfo {
 		var r []ModelInfo
 		for _, m := range DevEcoModels {
 			r = append(r, ModelInfo{
-				ID: m.ID, Label: m.Label, Upstream: "deveco",
+				ID: m.ID, Label: m.Label, Upstream: "deveco", Wire: m.Upstream,
 				Stream: true, Context: m.Context, Output: m.Output, ToolCall: true,
 				Free: m.Free, Object: "model", Created: 1700000000,
 			})
@@ -153,7 +164,7 @@ func localModels(upstreamName string) []ModelInfo {
 		var r []ModelInfo
 		for _, m := range OpenCodeModels {
 			r = append(r, ModelInfo{
-				ID: m.ID, Label: m.Label, Upstream: "opencode",
+				ID: m.ID, Label: m.Label, Upstream: "opencode", Wire: m.ID,
 				Stream: true, Context: m.Context, Output: m.Output, ToolCall: true,
 				Free: m.Free, Object: "model", Created: 1700000000,
 			})
@@ -163,9 +174,9 @@ func localModels(upstreamName string) []ModelInfo {
 		var r []ModelInfo
 		for _, m := range WorkBuddyModels {
 			r = append(r, ModelInfo{
-				ID: m.ID, Label: m.Label, Upstream: "workbuddy",
+				ID: m.ID, Label: m.Label, Upstream: "workbuddy", Wire: stripWbPrefix(m.ID),
 				Stream: true, Context: m.Context, Output: m.Output,
-				Vision: m.Vision, ToolCall: m.ToolCall, Free: m.Free,
+				Vision: m.Vision, ToolCall: m.ToolCall, Reasoning: m.Reasoning, Free: m.Free,
 				Object: "model", Created: 1700000000,
 			})
 		}

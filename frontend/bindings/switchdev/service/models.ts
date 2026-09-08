@@ -302,6 +302,58 @@ export class Dashboard {
 }
 
 /**
+ * LogPage 一页日志 + 分页元信息
+ */
+export class LogPage {
+    "logs": (proxy$0.LogEntry | null)[];
+
+    /**
+     * 当前范围+状态下的总条数
+     */
+    "total": number;
+
+    /**
+     * 本页起始偏移
+     */
+    "offset": number;
+
+    /**
+     * 每页条数
+     */
+    "limit": number;
+
+    /** Creates a new LogPage instance. */
+    constructor($$source: Partial<LogPage> = {}) {
+        if (!("logs" in $$source)) {
+            this["logs"] = [];
+        }
+        if (!("total" in $$source)) {
+            this["total"] = 0;
+        }
+        if (!("offset" in $$source)) {
+            this["offset"] = 0;
+        }
+        if (!("limit" in $$source)) {
+            this["limit"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LogPage instance from a string or object.
+     */
+    static createFrom($$source: any = {}): LogPage {
+        const $$createField0_0 = $$createType11;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("logs" in $$parsedSource) {
+            $$parsedSource["logs"] = $$createField0_0($$parsedSource["logs"]);
+        }
+        return new LogPage($$parsedSource as Partial<LogPage>);
+    }
+}
+
+/**
  * LogStats 日志统计
  */
 export class LogStats {
@@ -349,11 +401,17 @@ export class ModelDetail {
     "output": number;
     "vision": boolean;
     "toolCall": boolean;
+    "reasoning"?: boolean;
 
     /**
      * 限时免费标识
      */
     "free"?: boolean;
+
+    /**
+     * live=接口实时/DB 回读 | local=种子白名单 | free=供应商
+     */
+    "source"?: string;
 
     /** Creates a new ModelDetail instance. */
     constructor($$source: Partial<ModelDetail> = {}) {

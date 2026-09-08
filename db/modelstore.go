@@ -241,6 +241,154 @@ func (d *DB) QueryModelID(upstreamID int64, modelID string) int64 {
 	return id
 }
 
+// ====== 模型目录（内置上游的实时模型清单持久化） ======
+
+// CatalogEntry 目录条目。model_id 存代理内部 id（含 wb/ 前缀），
+// wire_name 存发往上游 base_url 的真实 model 名（DevEco 两者不同）。
+type CatalogEntry struct {
+	UpstreamName string
+	ModelID      string
+	WireName     string
+	Label        string
+	Context      int
+	Output       int
+	Stream       bool
+	Vision       bool
+	ToolCall     bool
+	Reasoning    bool
+	Free         bool
+}
+
+// SyncUpstreamCatalog 用一次拉取结果全量替换某上游的目录（单事务）。
+// 与 UpsertModel 不同，这里的元数据是**全量覆盖**：实时结果把 context 改小、
+// 把能力位关掉都必须能生效。
+//
+// 本次结果中缺席的模型只置 available=0，绝不 DELETE —— models 行被
+// logs.model_id / logs.used_model_id 外键引用，删了会让历史日志和用量统计断链。
+func (d *DB) SyncUpstreamCatalog(upstreamName string, entries []CatalogEntry) error {
+	if upstreamName == "" {
+		return nil
+	}
+	upID := d.QueryUpstreamID(upstreamName)
+	if upID == 0 {
+		var err error
+		upID, err = d.UpsertUpstream(upstreamName, "builtin", upstreamName, "")
+		if err != nil {
+			return err
+		}
+	}
+
+	now := time.Now().Format("2006-01-02 15:04:05")
+
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 先把本上游的目录行全部标记为不可用，命中的再逐条置回 —— 省掉「算差集」的往返。
+	// 限定 catalog_source='live'：日志写入路径（upsertModelInTx）也会建 models 行，
+	// 那些行不属于目录，不该被这里翻动。
+	if _, err := tx.Exec(
+		`UPDATE models SET available = 0 WHERE upstream_id = ? AND catalog_source = 'live'`, upID,
+	); err != nil {
+		return err
+	}
+
+	ins, err := tx.Prepare(
+		`INSERT INTO models
+		    (upstream_id, model_id, label, context, output, stream, vision, tool_call, free,
+		     reasoning, wire_name, available, catalog_source, synced_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'live', ?)
+		 ON CONFLICT(upstream_id, model_id) DO UPDATE SET
+		    label = excluded.label,
+		    context = excluded.context,
+		    output = excluded.output,
+		    stream = excluded.stream,
+		    vision = excluded.vision,
+		    tool_call = excluded.tool_call,
+		    free = excluded.free,
+		    reasoning = excluded.reasoning,
+		    wire_name = excluded.wire_name,
+		    available = 1,
+		    catalog_source = 'live',
+		    synced_at = excluded.synced_at`)
+	if err != nil {
+		return err
+	}
+	defer ins.Close()
+
+	for _, e := range entries {
+		// 与 upsertModelInTx 对齐：空 id 和 auto 虚拟模型不入库
+		if e.ModelID == "" || e.ModelID == "auto" {
+			continue
+		}
+		label := e.Label
+		if label == "" {
+			label = e.ModelID
+		}
+		wire := e.WireName
+		if wire == "" {
+			wire = e.ModelID
+		}
+		if _, err := ins.Exec(
+			upID, e.ModelID, label, e.Context, e.Output,
+			boolToInt(e.Stream), boolToInt(e.Vision), boolToInt(e.ToolCall), boolToInt(e.Free),
+			boolToInt(e.Reasoning), wire, now,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ListCatalog 回读全部可用目录条目（仅内置上游，供应商模型由 providerapi 自己管）
+func (d *DB) ListCatalog() ([]CatalogEntry, error) {
+	return d.queryCatalog("")
+}
+
+// ListCatalogByUpstream 回读某上游的可用目录条目
+func (d *DB) ListCatalogByUpstream(upstreamName string) ([]CatalogEntry, error) {
+	return d.queryCatalog(upstreamName)
+}
+
+func (d *DB) queryCatalog(upstreamName string) ([]CatalogEntry, error) {
+	q := `SELECT u.name, m.model_id, m.wire_name, m.label,
+	             m.context, m.output, m.stream, m.vision, m.tool_call, m.reasoning, m.free
+	      FROM models m
+	      JOIN upstreams u ON m.upstream_id = u.id
+	      WHERE m.available = 1 AND m.catalog_source = 'live' AND m.model_id != ''`
+	args := []interface{}{}
+	if upstreamName != "" {
+		q += ` AND u.name = ?`
+		args = append(args, upstreamName)
+	}
+	q += ` ORDER BY u.name, m.model_id`
+
+	rows, err := d.conn.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []CatalogEntry
+	for rows.Next() {
+		var e CatalogEntry
+		var stream, vision, toolCall, reasoning, free int
+		if err := rows.Scan(&e.UpstreamName, &e.ModelID, &e.WireName, &e.Label,
+			&e.Context, &e.Output, &stream, &vision, &toolCall, &reasoning, &free); err != nil {
+			continue
+		}
+		e.Stream = stream == 1
+		e.Vision = vision == 1
+		e.ToolCall = toolCall == 1
+		e.Reasoning = reasoning == 1
+		e.Free = free == 1
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1

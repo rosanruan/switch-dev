@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -101,6 +102,11 @@ func (d *DB) migrate() error {
 			vision         INTEGER NOT NULL DEFAULT 0,
 			tool_call      INTEGER NOT NULL DEFAULT 0,
 			free           INTEGER NOT NULL DEFAULT 0,
+			reasoning      INTEGER NOT NULL DEFAULT 0,
+			wire_name      TEXT NOT NULL DEFAULT '',
+			available      INTEGER NOT NULL DEFAULT 1,
+			catalog_source TEXT NOT NULL DEFAULT '',
+			synced_at      TEXT NOT NULL DEFAULT '',
 			verified       INTEGER NOT NULL DEFAULT 0,
 			healthy        INTEGER NOT NULL DEFAULT 0,
 			bench_tps      REAL NOT NULL DEFAULT 0,
@@ -178,11 +184,61 @@ func (d *DB) migrate() error {
 		}
 	}
 
+	// 增量加列：老库建表时没有这些列，CREATE TABLE IF NOT EXISTS 不会补。
+	// 必须在哨兵行之前执行，否则新列的 NOT NULL DEFAULT 对已有行不生效。
+	if err := d.addColumns("models", []columnDef{
+		{"reasoning", "INTEGER NOT NULL DEFAULT 0"},
+		{"wire_name", "TEXT NOT NULL DEFAULT ''"},
+		{"available", "INTEGER NOT NULL DEFAULT 1"},
+		{"catalog_source", "TEXT NOT NULL DEFAULT ''"},
+		{"synced_at", "TEXT NOT NULL DEFAULT ''"},
+	}); err != nil {
+		return err
+	}
+
 	// 哨兵行：id=0 的 source/upstream/model，供日志外键引用空值（model="" 或 "auto" 时 upsertModelInTx 返回 0）
 	// SQLite AUTOINCREMENT 从 1 开始，手动插入 id=0 不会冲突
 	d.conn.Exec(`INSERT OR IGNORE INTO sources (id, name, user_agent) VALUES (0, '', '')`)
 	d.conn.Exec(`INSERT OR IGNORE INTO upstreams (id, name, type, label) VALUES (0, 'unknown', 'builtin', '未知')`)
 	d.conn.Exec(`INSERT OR IGNORE INTO models (id, upstream_id, model_id, label) VALUES (0, 0, '', '')`)
 
+	return nil
+}
+
+// columnDef 增量加列的列定义
+type columnDef struct {
+	name string
+	decl string // 类型 + 约束，如 "INTEGER NOT NULL DEFAULT 0"
+}
+
+// addColumns 幂等地给已有表加列。本项目没有版本化迁移，靠 PRAGMA table_info
+// 探测现有列名，缺失才 ALTER。重复执行安全（升级路径会反复调用）。
+func (d *DB) addColumns(table string, cols []columnDef) error {
+	rows, err := d.conn.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return fmt.Errorf("读取 %s 表结构失败: %w", table, err)
+	}
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			existing[name] = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("读取 %s 表结构失败: %w", table, err)
+	}
+
+	for _, c := range cols {
+		if existing[c.name] {
+			continue
+		}
+		_, err := d.conn.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, c.name, c.decl))
+		// 并发/重入下可能已被别的路径加上，这种错误可忽略
+		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("给 %s 加列 %s 失败: %w", table, c.name, err)
+		}
+	}
 	return nil
 }

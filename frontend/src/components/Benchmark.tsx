@@ -5,6 +5,7 @@ import type { BenchmarkResult, ModelDetail, AllCredStatus } from "../../bindings
 import { useWailsEvent } from "../hooks/useWailsEvent";
 import { ModelSelect } from "./ModelSelect";
 import ConfirmPopover from "./ConfirmPopover";
+import TrashIcon from "./TrashIcon";
 
 const DEFAULT_PROMPT = "请详细介绍 Go 语言的 goroutine 和 channel 并发模型，包括基本概念、使用示例和注意事项。";
 const STORAGE_KEY = "benchmark.items.v2";
@@ -615,9 +616,9 @@ export default function Benchmark({ creds }: { creds: AllCredStatus | null }) {
                   title="移除该测评项？"
                   confirmLabel="移除"
                   onConfirm={() => removeItem(idx)}
-                  triggerClassName={`px-2 py-1 text-xs rounded-md text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-50 ${isBusy ? "pointer-events-none opacity-40" : ""}`}
+                  triggerClassName={`px-2 py-1 text-xs rounded-md text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 ${isBusy ? "pointer-events-none opacity-40" : ""}`}
                 >
-                  ✕
+                  <TrashIcon />
                 </ConfirmPopover>
                 {isBusy && (
                   <span className="text-xs text-[var(--color-text-dim)] animate-pulse">⏳ 请求中...</span>

@@ -124,33 +124,35 @@ func (d *DB) upsertModelInTx(tx *sql.Tx, upstreamID int64, modelIDStr string) in
 
 // LogRow 查询结果行（JOIN 后的扁平结构）
 type LogRow struct {
-	ID               int64
-	DateTime         string
-	Date             string
-	ModelName        string
-	UsedModelName    string
-	SourceName       string
-	UpstreamName     string
-	UpstreamLabel    string
-	Status           string
-	Code             int
-	Duration         int64
-	ErrorMsg         string
-	Method           string
-	Path             string
-	Stream           bool
-	RequestBody      string
-	ResponseBody     string
-	InputTokens      int
-	OutputTokens     int
-	CacheHitTokens   int
-	Cost             float64
-	CostText         string
-	FirstByteMs      int64
+	ID             int64
+	DateTime       string
+	Date           string
+	ModelName      string
+	UsedModelName  string
+	SourceName     string
+	UpstreamName   string
+	UpstreamLabel  string
+	Status         string
+	Code           int
+	Duration       int64
+	ErrorMsg       string
+	Method         string
+	Path           string
+	Stream         bool
+	RequestBody    string
+	ResponseBody   string
+	InputTokens    int
+	OutputTokens   int
+	CacheHitTokens int
+	Cost           float64
+	CostText       string
+	FirstByteMs    int64
 }
 
-// QueryLogs 按日期范围查询日志，JOIN 关联表还原名称
-func (d *DB) QueryLogs(startDate, endDate string, limit int) ([]*proxy.LogEntry, error) {
+// QueryLogs 按日期范围查询日志，JOIN 关联表还原名称。
+// status 非空时只返回该状态（分页时筛选必须下推到 SQL，否则页内再过滤会与
+// LogCountsByRange 的计数对不上）；limit<=0 表示不限制；offset>0 时跳过前 N 条。
+func (d *DB) QueryLogs(startDate, endDate, status string, limit, offset int) ([]*proxy.LogEntry, error) {
 	q := `
 		SELECT
 			l.id, l.date_time, l.date,
@@ -170,12 +172,23 @@ func (d *DB) QueryLogs(startDate, endDate string, limit int) ([]*proxy.LogEntry,
 		LEFT JOIN models m1    ON l.model_id = m1.id
 		LEFT JOIN models m2    ON l.used_model_id = m2.id
 		WHERE l.date BETWEEN ? AND ?
-		ORDER BY l.date_time DESC, l.id DESC
 	`
 	args := []any{startDate, endDate}
+	if status != "" {
+		q += " AND l.status = ?"
+		args = append(args, status)
+	}
+	q += " ORDER BY l.date_time DESC, l.id DESC"
 	if limit > 0 {
 		q += " LIMIT ?"
 		args = append(args, limit)
+	} else if offset > 0 {
+		// SQLite 的 OFFSET 必须跟在 LIMIT 后面，无上限时用 -1 占位
+		q += " LIMIT -1"
+	}
+	if offset > 0 {
+		q += " OFFSET ?"
+		args = append(args, offset)
 	}
 
 	rows, err := d.conn.Query(q, args...)

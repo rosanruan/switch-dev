@@ -16,17 +16,64 @@ func (s *LogService) GetRecentLogs(count int) []*proxy.LogEntry {
 	return s.core.GetRecentLogs(count)
 }
 
+// LogPage 一页日志 + 分页元信息
+type LogPage struct {
+	Logs   []*proxy.LogEntry `json:"logs"`
+	Total  int64             `json:"total"`  // 当前范围+状态下的总条数
+	Offset int               `json:"offset"` // 本页起始偏移
+	Limit  int               `json:"limit"`  // 每页条数
+}
+
 // GetLogsByRange 按日期范围查询日志，从 SQLite 读，倒序
 // 日期格式 "YYYY-MM-DD"
 func (s *LogService) GetLogsByRange(startDate, endDate string, limit int) []*proxy.LogEntry {
 	if s.core.DB() == nil {
 		return nil
 	}
-	logs, err := s.core.DB().QueryLogs(startDate, endDate, limit)
+	logs, err := s.core.DB().QueryLogs(startDate, endDate, "", limit, 0)
 	if err != nil {
 		return nil
 	}
 	return logs
+}
+
+// GetLogPage 分页查询日志。status 为空表示全部；status 非空时筛选下推到 SQL，
+// 保证返回的 Total 与页内条目口径一致（否则页内再过滤会与状态计数对不上）。
+func (s *LogService) GetLogPage(startDate, endDate, status string, limit, offset int) *LogPage {
+	if s.core.DB() == nil {
+		return &LogPage{Limit: limit, Offset: offset}
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	counts, err := s.core.DB().LogCountsByRange(startDate, endDate)
+	if err != nil {
+		counts = nil
+	}
+	var total int64
+	if status == "" {
+		for _, n := range counts {
+			total += n
+		}
+	} else {
+		total = counts[status]
+	}
+
+	// offset 越界（如筛选切换后停在末页）时回到最后一页，避免返回空列表
+	if total > 0 && int64(offset) >= total {
+		lastPage := (total - 1) / int64(limit)
+		offset = int(lastPage * int64(limit))
+	}
+
+	logs, err := s.core.DB().QueryLogs(startDate, endDate, status, limit, offset)
+	if err != nil {
+		return &LogPage{Total: total, Limit: limit, Offset: offset}
+	}
+	return &LogPage{Logs: logs, Total: total, Limit: limit, Offset: offset}
 }
 
 // GetLogDates 列出所有有日志的日期（倒序）

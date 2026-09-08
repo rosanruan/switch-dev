@@ -103,6 +103,7 @@ export function ReconcileAutoStart(): $CancellablePromise<void> {
 
 /**
  * RefreshModels 强制刷新模型列表（忽略缓存）
+ * 同时刷新内置上游的持久化目录，让 /v1/models 和路由层也拿到最新模型
  */
 export function RefreshModels(): $CancellablePromise<$models.UpstreamModels[]> {
     return $Call.ByID(2657703844).then(($result: any) => {

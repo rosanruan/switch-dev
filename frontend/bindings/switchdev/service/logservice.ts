@@ -38,11 +38,21 @@ export function GetLogDates(): $CancellablePromise<string[]> {
 }
 
 /**
+ * GetLogPage 分页查询日志。status 为空表示全部；status 非空时筛选下推到 SQL，
+ * 保证返回的 Total 与页内条目口径一致（否则页内再过滤会与状态计数对不上）。
+ */
+export function GetLogPage(startDate: string, endDate: string, status: string, limit: number, offset: number): $CancellablePromise<$models.LogPage | null> {
+    return $Call.ByID(1923210626, startDate, endDate, status, limit, offset).then(($result: any) => {
+        return $$createType2($result);
+    });
+}
+
+/**
  * GetLogStats 获取日志统计（进程内累计，重启归零；仪表盘总览用）
  */
 export function GetLogStats(): $CancellablePromise<$models.LogStats | null> {
     return $Call.ByID(1185748336).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType4($result);
     });
 }
 
@@ -52,7 +62,7 @@ export function GetLogStats(): $CancellablePromise<$models.LogStats | null> {
  */
 export function GetLogsByRange(startDate: string, endDate: string, limit: number): $CancellablePromise<(proxy$0.LogEntry | null)[]> {
     return $Call.ByID(2612445780, startDate, endDate, limit).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType7($result);
     });
 }
 
@@ -61,7 +71,7 @@ export function GetLogsByRange(startDate: string, endDate: string, limit: number
  */
 export function GetRecentLogs(count: number): $CancellablePromise<(proxy$0.LogEntry | null)[]> {
     return $Call.ByID(1557978037, count).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType7($result);
     });
 }
 
@@ -70,7 +80,7 @@ export function GetRecentLogs(count: number): $CancellablePromise<(proxy$0.LogEn
  */
 export function GetTodaySpeed(): $CancellablePromise<$models.SpeedStats | null> {
     return $Call.ByID(1843081073).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
     });
 }
 
@@ -79,7 +89,7 @@ export function GetTodaySpeed(): $CancellablePromise<$models.SpeedStats | null> 
  */
 export function GetTodaySummary(): $CancellablePromise<$models.TodaySummary | null> {
     return $Call.ByID(745909738).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType11($result);
     });
 }
 
@@ -88,7 +98,7 @@ export function GetTodaySummary(): $CancellablePromise<$models.TodaySummary | nu
  */
 export function GetUsageStats(startDate: string, endDate: string): $CancellablePromise<$models.UsageStats | null> {
     return $Call.ByID(1672045915, startDate, endDate).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType13($result);
     });
 }
 
@@ -97,7 +107,7 @@ export function GetUsageStats(startDate: string, endDate: string): $CancellableP
  */
 export function GetUsageTrend(startDate: string, endDate: string, granularity: string): $CancellablePromise<$models.UsageTrend | null> {
     return $Call.ByID(1604637487, startDate, endDate, granularity).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType15($result);
     });
 }
 
@@ -107,23 +117,25 @@ export function GetUsageTrend(startDate: string, endDate: string, granularity: s
  */
 export function LogCountsByRange(startDate: string, endDate: string): $CancellablePromise<{ [_ in string]?: number }> {
     return $Call.ByID(1465699747, startDate, endDate).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType16($result);
     });
 }
 
 // Private type creation functions
 const $$createType0 = $Create.Array($Create.Any);
-const $$createType1 = $models.LogStats.createFrom;
+const $$createType1 = $models.LogPage.createFrom;
 const $$createType2 = $Create.Nullable($$createType1);
-const $$createType3 = proxy$0.LogEntry.createFrom;
+const $$createType3 = $models.LogStats.createFrom;
 const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = $Create.Array($$createType4);
-const $$createType6 = db$0.SpeedStats.createFrom;
-const $$createType7 = $Create.Nullable($$createType6);
-const $$createType8 = $models.TodaySummary.createFrom;
+const $$createType5 = proxy$0.LogEntry.createFrom;
+const $$createType6 = $Create.Nullable($$createType5);
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = db$0.SpeedStats.createFrom;
 const $$createType9 = $Create.Nullable($$createType8);
-const $$createType10 = $models.UsageStats.createFrom;
+const $$createType10 = $models.TodaySummary.createFrom;
 const $$createType11 = $Create.Nullable($$createType10);
-const $$createType12 = db$0.UsageTrend.createFrom;
+const $$createType12 = $models.UsageStats.createFrom;
 const $$createType13 = $Create.Nullable($$createType12);
-const $$createType14 = $Create.Map($Create.Any, $Create.Any);
+const $$createType14 = db$0.UsageTrend.createFrom;
+const $$createType15 = $Create.Nullable($$createType14);
+const $$createType16 = $Create.Map($Create.Any, $Create.Any);

@@ -570,23 +570,9 @@ func isValidUpstream(u string) bool {
 	return strings.TrimSpace(u) != ""
 }
 
-// isValidModel 检查模型 id 是否在已知白名单中（宽松校验，允许自定义）
+// isValidModel 宽松校验：允许任何非空模型名。
+// 模型清单现在是动态目录（种子 + 实时拉取 + DB 回读），config 包无法静态枚举；
+// 且运行时 executeChain* 对解析不到的模型会安全跳过，这里不该拦。
 func isValidModel(m string) bool {
-	// 检查所有已知模型
-	if proxy.JoyCodeModelIDs[m] || proxy.DevEcoModelIDs[m] || proxy.OpenCodeModelIDs[m] {
-		return true
-	}
-	// 用 label 反查也接受
-	low := strings.ToLower(m)
-	for _, v := range proxy.JoyCodeLabelToID {
-		if strings.ToLower(v) == low {
-			return true
-		}
-	}
-	for _, v := range proxy.DevEcoLabelToID {
-		if strings.ToLower(v) == low {
-			return true
-		}
-	}
-	return true // 宽松模式：允许不认识的模型名（可能是新增的）
+	return true
 }

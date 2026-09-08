@@ -15,7 +15,7 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
- * GetModels 获取全部可用模型
+ * GetModels 获取全部可用模型（读动态目录快照）
  */
 export function GetModels(): $CancellablePromise<($models.ModelDetail | null)[]> {
     return $Call.ByID(3137098590).then(($result: any) => {

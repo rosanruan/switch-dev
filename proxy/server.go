@@ -320,56 +320,31 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// handleModels 模型列表
+// handleModels 模型列表（读动态目录快照：种子 + 实时拉取 + DB 回读）
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	var data []ModelInfo
 
-	// auto 虚拟模型
+	// auto 虚拟模型（实际走向由运行模式的降级链决定）
 	data = append(data, ModelInfo{
 		ID: "auto", Object: "model", Created: 1700000000, OwnedBy: "multi",
-		Label:  "Auto（DevEco GLM-5.1，失败降级 JoyCode）",
-		Stream: true, Upstream: "deveco",
+		Label:  "Auto（按运行模式降级链）",
+		Stream: true, Upstream: "auto", ToolCall: true,
 	})
 
-	// OpenCode Zen 模型
-	for _, m := range OpenCodeModels {
+	for _, m := range CatalogSnapshot() {
 		data = append(data, ModelInfo{
-			ID: m.ID, Object: "model", Created: 1700000000, OwnedBy: "opencode",
-			Label: m.Label, Stream: true, Upstream: "opencode",
-			Context: m.Context, Output: m.Output, ToolCall: true,
-		})
-	}
-
-	// DevEco 模型
-	for _, m := range DevEcoModels {
-		data = append(data, ModelInfo{
-			ID: m.ID, Object: "model", Created: 1700000000, OwnedBy: "huawei",
-			Label: m.Label, Stream: true, Upstream: "deveco",
-			Context: m.Context, Output: m.Output, ToolCall: true,
-		})
-	}
-
-	// JoyCode 模型
-	for _, m := range JoyCodeModels {
-		data = append(data, ModelInfo{
-			ID: m.ID, Object: "model", Created: 1700000000, OwnedBy: "jd",
-			Label: m.Label, Stream: m.Stream, Upstream: "joycode", ToolCall: true,
-		})
-	}
-
-	// WorkBuddy 模型
-	for _, m := range WorkBuddyModels {
-		data = append(data, ModelInfo{
-			ID: m.ID, Object: "model", Created: 1700000000, OwnedBy: "tencent",
-			Label: m.Label, Stream: true, Upstream: "workbuddy",
-			Context: m.Context, Output: m.Output, Vision: m.Vision, ToolCall: m.ToolCall,
+			ID: m.ID, Object: "model", Created: 1700000000,
+			OwnedBy: modelOwner(m.Upstream),
+			Label:   m.Label, Stream: m.Stream, Upstream: m.Upstream,
+			Context: m.Context, Output: m.Output,
+			Vision: m.Vision, ToolCall: m.ToolCall, Reasoning: m.Reasoning, Free: m.Free,
 		})
 	}
 
 	// 供应商模型（动态注册的 verified 模型）
-	for _, m := range ProviderModels {
+	for _, m := range ProviderModelList() {
 		data = append(data, ModelInfo{
 			ID: m.InternalID, Object: "model", Created: 1700000000,
 			OwnedBy: m.ProviderID,
@@ -382,6 +357,19 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		"object": "list",
 		"data":   data,
 	})
+}
+
+// modelOwner 内置上游 -> OpenAI 风格 owned_by
+func modelOwner(upstreamName string) string {
+	switch upstreamName {
+	case "joycode":
+		return "jd"
+	case "deveco":
+		return "huawei"
+	case "workbuddy":
+		return "tencent"
+	}
+	return upstreamName
 }
 
 // recordLog 记录请求日志（entry 由 handlers 填充业务字段，server 补 ID/时间戳）

@@ -210,12 +210,15 @@ nsis-arm64: build-windows-arm64
 deb: build-linux-amd64
 	@wails3 generate .desktop -name "$(APP)" -exec "$(APP)" -icon "$(APP)" -outputfile "build/linux/$(APP).desktop" -categories "Development;"
 	@GOARCH=amd64 wails3 tool package -name "$(APP)" -format deb -config ./build/linux/nfpm/nfpm.yaml -out $(DIST)
-	@echo "✅ deb 打包完成: $(DIST)/$(APP)_*.deb"
+	@# wails3 tool package 输出文件名可能不带架构，重命名确保匹配 upload 通配
+	@if [ -f $(DIST)/$(APP).deb ] && [ ! -f $(DIST)/$(APP)_*_amd64.deb ]; then mv $(DIST)/$(APP).deb $(DIST)/$(APP)_amd64.deb; fi
+	@echo "✅ deb 打包完成: $(DIST)/$(APP)_*_amd64.deb"
 
 ## 打包 Linux arm64 deb 安装包
 deb-arm64: build-linux-arm64
 	@wails3 generate .desktop -name "$(APP)" -exec "$(APP)" -icon "$(APP)" -outputfile "build/linux/$(APP).desktop" -categories "Development;"
 	@GOARCH=arm64 wails3 tool package -name "$(APP)" -format deb -config ./build/linux/nfpm/nfpm.yaml -out $(DIST)
+	@if [ -f $(DIST)/$(APP).deb ] && [ ! -f $(DIST)/$(APP)_*_arm64.deb ]; then mv $(DIST)/$(APP).deb $(DIST)/$(APP)_arm64.deb; fi
 	@echo "✅ deb arm64 打包完成: $(DIST)/$(APP)_*_arm64.deb"
 
 ## 一键打包所有平台安装包（Universal DMG + NSIS amd64/arm64 + deb amd64/arm64）
@@ -368,7 +371,7 @@ build-server-binaries: build-server-linux-amd64 build-server-linux-arm64 build-s
 
 ## 运行 Go 测试（排除 wails 模板目录 build/，其 package main 无 func main 会编译报错）
 test:
-	go test $$(shell go list ./... | grep -v '/build/')
+	go test $$(go list ./... | grep -v '/build/')
 
 ## 格式化 Go 代码
 fmt:

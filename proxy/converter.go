@@ -14,11 +14,10 @@ func AnthropicToOpenAI(body *AnthropicRequest) (*OpenAIRequest, bool) {
 	isAuto := requestedModel == "" || strings.ToLower(requestedModel) == "auto"
 
 	messages, tools := anthropicMessagesToOpenAI(body)
-	jcMeta := JoyCodeModelByID[resolvedModel]
 
 	maxTokens := ClampMaxTokens(body.MaxTokens, 0)
-	if jcMeta != nil {
-		maxTokens = ClampMaxTokens(body.MaxTokens, jcMeta.OutputMaxTokens)
+	if jcMeta, ok := LookupModel(resolvedModel); ok {
+		maxTokens = ClampMaxTokens(body.MaxTokens, jcMeta.Output)
 	}
 
 	openai := &OpenAIRequest{
@@ -45,13 +44,11 @@ func AnthropicToOpenAI(body *AnthropicRequest) (*OpenAIRequest, bool) {
 }
 
 // AnthropicToOpenAIDeveco 把 Anthropic 请求转成 DevEco 的 OpenAI body（不注入业务字段）
+// 目录里查不到的模型（如接口新上、种子还没收录的）原样透传 model 名、不钳制 max_tokens：
+// 让上游自己报错，胜过静默换成另一个模型。
 func AnthropicToOpenAIDeveco(body *AnthropicRequest) *OpenAIRequest {
 	requestedModel := body.Model
 	resolvedModel := ResolveModel(requestedModel)
-	devecoModel := DevEcoModelByID[resolvedModel]
-	if devecoModel == nil {
-		devecoModel = &DevEcoModels[0]
-	}
 
 	messages, tools := anthropicMessagesToOpenAI(body)
 
@@ -59,12 +56,14 @@ func AnthropicToOpenAIDeveco(body *AnthropicRequest) *OpenAIRequest {
 	if body.MaxTokens > 0 {
 		maxTokens = body.MaxTokens
 	}
-	if devecoModel.Output > 0 && maxTokens > devecoModel.Output {
-		maxTokens = devecoModel.Output
+
+	wireModel := ActualUpstreamModel(resolvedModel)
+	if dm, ok := LookupModel(resolvedModel); ok && dm.Output > 0 && maxTokens > dm.Output {
+		maxTokens = dm.Output
 	}
 
 	openai := &OpenAIRequest{
-		Model:     devecoModel.Upstream,
+		Model:     wireModel,
 		Messages:  messages,
 		Stream:    false,
 		MaxTokens: maxTokens,
@@ -91,13 +90,12 @@ func AnthropicToOpenAIOpencode(body *AnthropicRequest) *OpenAIRequest {
 	resolvedModel := ResolveModel(requestedModel)
 
 	messages, tools := anthropicMessagesToOpenAI(body)
-	ocMeta := OpenCodeModelByID[resolvedModel]
 
 	maxTokens := 4096
 	if body.MaxTokens > 0 {
 		maxTokens = body.MaxTokens
 	}
-	if ocMeta != nil && ocMeta.Output > 0 && maxTokens > ocMeta.Output {
+	if ocMeta, ok := LookupModel(resolvedModel); ok && ocMeta.Output > 0 && maxTokens > ocMeta.Output {
 		maxTokens = ocMeta.Output
 	}
 
@@ -130,13 +128,12 @@ func AnthropicToOpenAIWorkbuddy(body *AnthropicRequest) *OpenAIRequest {
 	resolvedModel := ResolveModel(requestedModel)
 
 	messages, tools := anthropicMessagesToOpenAI(body)
-	wbMeta := WorkBuddyModelByID[resolvedModel]
 
 	maxTokens := 4096
 	if body.MaxTokens > 0 {
 		maxTokens = body.MaxTokens
 	}
-	if wbMeta != nil && wbMeta.Output > 0 && maxTokens > wbMeta.Output {
+	if wbMeta, ok := LookupModel(resolvedModel); ok && wbMeta.Output > 0 && maxTokens > wbMeta.Output {
 		maxTokens = wbMeta.Output
 	}
 
