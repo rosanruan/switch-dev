@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +40,19 @@ func sourceFromUA(ua string) string {
 		}
 		return ua
 	}
+}
+
+func withConversationContext(r *http.Request, metadataUserID string) context.Context {
+	key := strings.TrimSpace(r.Header.Get("Chat-Id"))
+	metadataUserID = strings.TrimSpace(metadataUserID)
+	// 纯账号 ID 不能区分同账号的不同对话，只有带 session 段才可复用。
+	if key == "" && strings.Contains(metadataUserID, "_session_") {
+		key = metadataUserID
+	}
+	if key == "" {
+		return r.Context()
+	}
+	return upstream.WithConversationKey(r.Context(), key)
 }
 
 // setSource 给日志条目设置请求来源和原始 User-Agent（若为空则从请求 UA 推断）
@@ -186,10 +200,15 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	}
 	source := sourceFromUA(r.Header.Get("User-Agent"))
 	userAgent := r.Header.Get("User-Agent")
+	metadataUserID := ""
+	if body.Metadata != nil {
+		metadataUserID = body.Metadata.UserID
+	}
+	ctx := withConversationContext(r, metadataUserID)
 
 	// 流式：优先尝试真流式（实现 StreamCaller 的上游直传 SSE；未实现的回退伪流式）
 	if stream {
-		sr, upName, usedModel, err := s.callUpstreamStream(r.Context(), &body, userAgent)
+		sr, upName, usedModel, err := s.callUpstreamStream(ctx, &body, userAgent)
 		if sr != nil {
 			// 上游本身就是 Anthropic 协议：SSE 直接透传（同协议）
 			if s.upstreamProtocolByName(upName) == "anthropic" {
@@ -211,7 +230,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	}
 
 	start := time.Now()
-	resp, upName, usedModel, err := s.callUpstreamAnthropic(r.Context(), &body, userAgent)
+	resp, upName, usedModel, err := s.callUpstreamAnthropic(ctx, &body, userAgent)
 	duration := time.Since(start).Milliseconds()
 	reqBodyStr := string(raw)
 
@@ -367,10 +386,11 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 	}
 	source := sourceFromUA(r.Header.Get("User-Agent"))
 	userAgent := r.Header.Get("User-Agent")
+	ctx := withConversationContext(r, "")
 
 	// 流式：优先尝试真流式（实现 StreamCaller 的上游直传 SSE；未实现的回退伪流式）
 	if stream {
-		sr, upName, usedModel, err := s.callUpstreamStream(r.Context(), body, userAgent)
+		sr, upName, usedModel, err := s.callUpstreamStream(ctx, body, userAgent)
 		if sr != nil {
 			s.streamOpenAIResponse(w, sr, requestedModel, upName, usedModel, source, userAgent, string(raw))
 			return
@@ -387,7 +407,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 	}
 
 	start := time.Now()
-	resp, upName, usedModel, err := s.callUpstreamOpenAI(r.Context(), body, userAgent)
+	resp, upName, usedModel, err := s.callUpstreamOpenAI(ctx, body, userAgent)
 	duration := time.Since(start).Milliseconds()
 	reqBodyStr := string(raw)
 

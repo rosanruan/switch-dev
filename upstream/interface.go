@@ -49,6 +49,17 @@ type StreamCaller interface {
 	CallStream(ctx context.Context, body []byte) (*StreamResponse, error)
 }
 
+type conversationContextKey struct{}
+
+func WithConversationKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, conversationContextKey{}, key)
+}
+
+func ConversationKey(ctx context.Context) string {
+	key, _ := ctx.Value(conversationContextKey{}).(string)
+	return key
+}
+
 // VerifyResult 预检结果
 type VerifyResult struct {
 	Valid  bool

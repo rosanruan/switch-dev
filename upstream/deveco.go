@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -186,7 +187,7 @@ func (u *DevEcoUpstream) doCall(ctx context.Context, body []byte, cred *creds.De
 	}
 	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cred.AccessToken))
-	req.Header.Set("Chat-Id", randomChatID()) // 必须 32 位无横杠 UUID
+	req.Header.Set("Chat-Id", devEcoChatID(ctx)) // 必须 32 位无横杠 UUID
 	req.Header.Set("X-DevEco-Improvement-Enabled", fmt.Sprintf("%v", u.mgr.ReadImprovementEnabled()))
 	req.Header.Set("lang", "en")
 	req.Header.Set("Accept", "application/json")
@@ -261,7 +262,7 @@ func (u *DevEcoUpstream) doCallStream(ctx context.Context, body []byte, cred *cr
 	}
 	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cred.AccessToken))
-	req.Header.Set("Chat-Id", randomChatID())
+	req.Header.Set("Chat-Id", devEcoChatID(ctx))
 	req.Header.Set("X-DevEco-Improvement-Enabled", fmt.Sprintf("%v", u.mgr.ReadImprovementEnabled()))
 	req.Header.Set("lang", "en")
 	req.Header.Set("Accept", "text/event-stream")
@@ -363,6 +364,15 @@ func isDevEcoTokenInvalid(resp *Response) bool {
 		}
 	}
 	return false
+}
+
+func devEcoChatID(ctx context.Context) string {
+	key := ConversationKey(ctx)
+	if key == "" {
+		return randomChatID()
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:16])
 }
 
 // randomChatID 生成 32 位无横杠 UUID（DevEco Chat-Id 要求）
