@@ -227,14 +227,28 @@ func DevEcoAuthCandidates() []string {
 
 // MCAccountdbCandidates 中国移动云盘 accountdb.db 跨平台候选路径
 // （RCS token 明文存 t_account 表，30 天滚动由 App 登录自动续）
+// 注意：仅 macOS 版客户端使用 accountdb.db；Windows 版不写此文件，
+// 登录态存于 Chromium localStorage（见 MCLocalStorageLevelDBCandidates）。
 func MCAccountdbCandidates() []string {
 	home, _ := os.UserHomeDir()
 	c := []string{
 		filepath.Join(home, "Library", "Application Support", "mCloud", "accountdb.db"), // macOS
 	}
-	// Windows：Electron 应用数据目录（未实测，Windows 版 App 存在 —— clientType 11）
+	// Windows：保留作逃生口（用户可用 MCLOUD_ACCOUNTDB 显式指定）；实际 Windows 走 localStorage
 	for _, base := range windowsConfigDirs() {
 		c = append(c, filepath.Join(base, "mCloud", "accountdb.db"))
+	}
+	return c
+}
+
+// MCLocalStorageLevelDBCandidates Windows 版移动云盘（Electron）的 localStorage LevelDB 目录。
+// Windows 客户端不写 accountdb.db，登录态（含 RCS token、手机号、userDomainId）
+// 以 JSON 存于 Chromium localStorage 的 `UserInfo` 键（origin=file://，value 为 UTF-8）。
+// 返回的是 leveldb 目录（非单文件）；客户端运行时该目录被锁，读取方需复制副本后打开。
+func MCLocalStorageLevelDBCandidates() []string {
+	var c []string
+	for _, base := range windowsConfigDirs() {
+		c = append(c, filepath.Join(base, "mCloud", "Local Storage", "leveldb"))
 	}
 	return c
 }

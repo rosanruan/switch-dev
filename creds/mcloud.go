@@ -3,11 +3,19 @@ package creds
 import (
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	_ "modernc.org/sqlite"
 	"switchdev/paths"
 )
@@ -50,7 +58,13 @@ func NewMCloudCredManager(config MCloudConfig) *MCloudCredManager {
 func (m *MCloudCredManager) Config() MCloudConfig { return m.config }
 
 // LoadCreds 从 accountdb.db 读取 RCS token（明文 SQLite，modernc.org/sqlite 纯 Go 驱动）
+// Windows 客户端不写 accountdb.db，改走 localStorage LevelDB（见 loadCredsWindows）。
 func (m *MCloudCredManager) LoadCreds() (*MCloudCred, error) {
+	// Windows：仅当用户显式用 MCLOUD_ACCOUNTDB 指定了 db 时才走 SQLite 路径，
+	// 否则读 localStorage（Windows 版移动云盘的真实登录态存储）。
+	if runtime.GOOS == "windows" && os.Getenv("MCLOUD_ACCOUNTDB") == "" {
+		return m.loadCredsWindows()
+	}
 	if _, err := os.Stat(m.config.DBPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("找不到移动云盘 accountdb.db: %s\n请先安装中国移动云盘 App 并登录，或用 MCLOUD_ACCOUNTDB 环境变量指定路径", m.config.DBPath)
 	}
@@ -173,4 +187,142 @@ func (m *MCloudCredManager) CredStatus() *CredStatusInfo {
 func MCloudBasicAuth(cred *MCloudCred) string {
 	raw := fmt.Sprintf("mobile:%s:%s", cred.Phone, cred.RCSToken)
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(raw))
+}
+
+// ===== Windows（Electron）登录态读取：Chromium localStorage LevelDB =====
+
+// mcLocalUserInfo 移动云盘 Windows 客户端 localStorage 中 `UserInfo` 键的 JSON 结构。
+// 与 macOS accountdb.db 的 t_account 表字段对应：
+//
+//	account      <-> account        手机号
+//	authToken    <-> token          RCS token（形如 "<rand>|1|RCS|<issuedMs>|<sig>"）
+//	userDomainId <-> userDomainId   请求体 userId
+//	atExpiretime <-> tokenValidTime token 有效期（秒）
+type mcLocalUserInfo struct {
+	Account      string `json:"account"`
+	AuthToken    string `json:"authToken"`
+	UserDomainID string `json:"userDomainId"`
+	AtExpireTime int64  `json:"atExpiretime"`
+}
+
+// loadCredsWindows 从 Windows 版移动云盘的 localStorage 读取登录态。
+func (m *MCloudCredManager) loadCredsWindows() (*MCloudCred, error) {
+	dir := paths.Resolve("MCLOUD_LEVELDB", paths.MCLocalStorageLevelDBCandidates())
+	if _, err := os.Stat(dir); err != nil {
+		return nil, fmt.Errorf("找不到移动云盘 localStorage 目录: %s\n请先安装并登录中国移动云盘 App，或用 MCLOUD_LEVELDB 环境变量指定", dir)
+	}
+	// 客户端运行时独占 LOCK，goleveldb 无法直接打开原目录，复制副本再读。
+	tmp, err := copyLevelDBDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("复制移动云盘 localStorage 失败: %v", err)
+	}
+	defer os.RemoveAll(tmp)
+
+	raw, err := readMCloudUserInfoJSON(tmp)
+	if err != nil {
+		return nil, err
+	}
+	var ui mcLocalUserInfo
+	if err := json.Unmarshal(raw, &ui); err != nil {
+		return nil, fmt.Errorf("解析移动云盘 UserInfo 失败: %v", err)
+	}
+	if ui.AuthToken == "" {
+		return nil, fmt.Errorf("移动云盘 UserInfo.authToken 为空。请先在中国移动云盘 App 登录")
+	}
+	validSecs := ui.AtExpireTime
+	if validSecs <= 0 {
+		validSecs = 2592000 // 默认 30 天
+	}
+	return &MCloudCred{
+		Phone:     ui.Account,
+		UserID:    ui.UserDomainID,
+		RCSToken:  ui.AuthToken,
+		ExpiresAt: mcTokenIssuedMs(ui.AuthToken) + validSecs*1000,
+		FetchedAt: time.Now(),
+		Valid:     false,
+	}, nil
+}
+
+// mcTokenIssuedMs 从 RCS token 第 4 段解析签发毫秒时间戳（"<rand>|1|RCS|<issuedMs>|<sig>"）。
+// 解析失败返回 0，此时 ExpiresAt 仅由有效期决定（IsExpired 对 ExpiresAt<=0 视为不过期）。
+func mcTokenIssuedMs(token string) int64 {
+	parts := strings.Split(token, "|")
+	if len(parts) < 4 {
+		return 0
+	}
+	ms, err := strconv.ParseInt(parts[3], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return ms
+}
+
+// readMCloudUserInfoJSON 在 localStorage leveldb 副本中定位含 authToken 的登录态 JSON。
+func readMCloudUserInfoJSON(dir string) ([]byte, error) {
+	db, err := leveldb.OpenFile(dir, &opt.Options{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("打开移动云盘 localStorage leveldb 失败: %v", err)
+	}
+	defer db.Close()
+	it := db.NewIterator(nil, nil)
+	defer it.Release()
+	for it.Next() {
+		v := decodeLocalStorageValue(it.Value())
+		if strings.Contains(v, `"authToken"`) {
+			return []byte(v), nil
+		}
+	}
+	if err := it.Error(); err != nil {
+		return nil, fmt.Errorf("读取移动云盘 localStorage 失败: %v", err)
+	}
+	return nil, fmt.Errorf("移动云盘 localStorage 中未找到登录态（UserInfo.authToken）。请先在中国移动云盘 App 登录")
+}
+
+// decodeLocalStorageValue 解码 Chromium localStorage 的 value：
+// 首字节 0x01 = UTF-8，0x00 = UTF-16LE。
+func decodeLocalStorageValue(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	switch b[0] {
+	case 0x01:
+		return string(b[1:])
+	case 0x00:
+		u := make([]uint16, 0, (len(b)-1)/2)
+		for i := 1; i+1 < len(b); i += 2 {
+			u = append(u, uint16(b[i])|uint16(b[i+1])<<8)
+		}
+		return string(utf16.Decode(u))
+	}
+	return string(b)
+}
+
+// copyLevelDBDir 把 localStorage leveldb 复制到临时目录（跳过被客户端独占的 LOCK 与
+// leveldb 自身的信息日志 LOG），返回临时目录路径，调用方负责 os.RemoveAll。
+func copyLevelDBDir(src string) (string, error) {
+	tmp, err := os.MkdirTemp("", "mcloud-ls-")
+	if err != nil {
+		return "", err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		switch name {
+		case "LOCK", "LOG", "LOG.old":
+			continue // LOCK 被客户端独占；LOG 是 leveldb 信息日志，非数据
+		}
+		data, err := os.ReadFile(filepath.Join(src, name))
+		if err != nil {
+			continue // 单个文件被占用则跳过（尽量读出可用数据）
+		}
+		_ = os.WriteFile(filepath.Join(tmp, name), data, 0o600)
+	}
+	return tmp, nil
 }

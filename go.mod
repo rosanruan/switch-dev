@@ -6,6 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/minio/selfupdate v0.6.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/syndtr/goleveldb v1.0.0
 	github.com/wailsapp/wails/v3 v3.0.0-beta.16
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.46.0
@@ -19,6 +20,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect

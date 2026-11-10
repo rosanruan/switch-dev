@@ -179,6 +179,11 @@ func probeCandidates(upstream string) []string {
 	case "opencode":
 		return paths.OpenCodeAuthCandidates()
 	case "mcloud":
+		// Windows 客户端不写 accountdb.db，登录态在 localStorage leveldb；
+		// 探测该目录即视为已安装（是否已登录由凭据加载另行判定）。
+		if runtime.GOOS == "windows" {
+			return paths.MCLocalStorageLevelDBCandidates()
+		}
 		return paths.MCAccountdbCandidates()
 	}
 	return nil
