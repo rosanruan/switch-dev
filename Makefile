@@ -208,18 +208,21 @@ nsis-arm64: build-windows-arm64
 
 ## 打包 Linux deb 安装包（需先构建对应架构二进制）
 deb: build-linux-amd64
+	@cp $(DIST)/$(APP)-linux-amd64 bin/$(APP)
 	@wails3 generate .desktop -name "$(APP)" -exec "$(APP)" -icon "$(APP)" -outputfile "build/linux/$(APP).desktop" -categories "Development;"
 	@GOARCH=amd64 wails3 tool package -name "$(APP)" -format deb -config ./build/linux/nfpm/nfpm.yaml -out $(DIST)
-	@# wails3 tool package 输出文件名可能不带架构，重命名确保匹配 upload 通配
-	@if [ -f $(DIST)/$(APP).deb ] && [ ! -f $(DIST)/$(APP)_*_amd64.deb ]; then mv $(DIST)/$(APP).deb $(DIST)/$(APP)_amd64.deb; fi
-	@echo "✅ deb 打包完成: $(DIST)/$(APP)_*_amd64.deb"
+	@rm -f bin/$(APP)
+	@if [ -f $(DIST)/$(APP).deb ]; then mv $(DIST)/$(APP).deb $(DIST)/$(APP)_$(V)_amd64.deb; fi
+	@echo "✅ deb 打包完成: $(DIST)/$(APP)_$(V)_amd64.deb"
 
 ## 打包 Linux arm64 deb 安装包
 deb-arm64: build-linux-arm64
+	@cp $(DIST)/$(APP)-linux-arm64 bin/$(APP)
 	@wails3 generate .desktop -name "$(APP)" -exec "$(APP)" -icon "$(APP)" -outputfile "build/linux/$(APP).desktop" -categories "Development;"
 	@GOARCH=arm64 wails3 tool package -name "$(APP)" -format deb -config ./build/linux/nfpm/nfpm.yaml -out $(DIST)
-	@if [ -f $(DIST)/$(APP).deb ] && [ ! -f $(DIST)/$(APP)_*_arm64.deb ]; then mv $(DIST)/$(APP).deb $(DIST)/$(APP)_arm64.deb; fi
-	@echo "✅ deb arm64 打包完成: $(DIST)/$(APP)_*_arm64.deb"
+	@rm -f bin/$(APP)
+	@if [ -f $(DIST)/$(APP).deb ]; then mv $(DIST)/$(APP).deb $(DIST)/$(APP)_$(V)_arm64.deb; fi
+	@echo "✅ deb arm64 打包完成: $(DIST)/$(APP)_$(V)_arm64.deb"
 
 ## 一键打包所有平台安装包（Universal DMG + NSIS amd64/arm64 + deb amd64/arm64）
 dist: dmg-universal nsis nsis-arm64 deb deb-arm64
@@ -462,7 +465,7 @@ upload:
 	missing=""; \
 	for f in $$required; do [ -f "$$f" ] || missing="$$missing $$f"; done; \
 	if [ -n "$$missing" ]; then echo "❌ 缺少裸二进制:$$missing（先 make build-binaries）"; exit 1; fi; \
-	optional="$(DIST)/$(APP)-linux-arm64 $(DIST)/$(APP)-windows-arm64.exe $(DIST)/$(APP)-darwin-universal.dmg $(DIST)/$(APP)-windows-amd64-installer.exe $(DIST)/$(APP)-windows-arm64-installer.exe $(DIST)/$(APP)_*_amd64.deb $(DIST)/$(APP)_*_arm64.deb $(DIST)/$(APP)-server-linux-amd64 $(DIST)/$(APP)-server-linux-arm64 $(DIST)/$(APP)-server-darwin-arm64 $(DIST)/$(APP)-server-darwin-amd64"; \
+	optional="$(DIST)/$(APP)-linux-arm64 $(DIST)/$(APP)-windows-arm64.exe $(DIST)/$(APP)-darwin-universal.dmg $(DIST)/$(APP)-windows-amd64-installer.exe $(DIST)/$(APP)-windows-arm64-installer.exe $(DIST)/$(APP)_$(V)_amd64.deb $(DIST)/$(APP)_$(V)_arm64.deb $(DIST)/$(APP)-server-linux-amd64 $(DIST)/$(APP)-server-linux-arm64 $(DIST)/$(APP)-server-darwin-arm64 $(DIST)/$(APP)-server-darwin-amd64"; \
 	toUpload="$$required"; \
 	for f in $$optional; do [ -f "$$f" ] && toUpload="$$toUpload $$f" || echo "ℹ️ 跳过可选安装包（不存在）: $$f"; done; \
 	gh release upload $(TAG) $$toUpload --repo $(REPO) --clobber; \

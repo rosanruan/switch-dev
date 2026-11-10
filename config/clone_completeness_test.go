@@ -132,8 +132,8 @@ func makeNonZeroConfig() *Config {
 		},
 		Presets: []Preset{
 			{
-				Name:    "test-preset",
-				Mode:    "manual",
+				Name:      "test-preset",
+				Mode:      "manual",
 				AutoChain: []AgentModels{{Upstream: "joycode", Models: []string{"gpt-4o"}}},
 				ManualFallbacks: map[string][]proxy.ModelRef{
 					"gpt-4o": {{Upstream: "joycode", Model: "gpt-4o"}},

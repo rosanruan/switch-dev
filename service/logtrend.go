@@ -109,4 +109,3 @@ func (s *LogService) GetUsageTrend(startDate, endDate string, granularity string
 func pad2(n int) string {
 	return fmt.Sprintf("%02d", n)
 }
-

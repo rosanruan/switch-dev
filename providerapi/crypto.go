@@ -17,7 +17,7 @@ const (
 	kdfTime    = 3
 	kdfMemory  = 64 * 1024 // 64 MiB
 	kdfThreads = 4
-	kdfKeyLen  = 32         // AES-256
+	kdfKeyLen  = 32 // AES-256
 	kdfSaltLen = 16
 )
 

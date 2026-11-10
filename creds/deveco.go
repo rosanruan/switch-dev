@@ -36,9 +36,9 @@ func DefaultDevEcoConfig() DevEcoConfig {
 		PluginVersion:   "CLI.0.1.7",
 		// DevEco Code 是 Node.js CLI，所有平台（含 Windows）都用字面 XDG 路径，
 		// 不能用 XDGConfigDir()（Windows 会映射到 %APPDATA%，导致找不到 token.dek）
-		KEKDir:          filepath.Join(paths.LiteralConfigDir(), "deveco"),
-		AuthPath:        paths.Resolve("DEVECO_AUTH_PATH", paths.DevEcoAuthCandidates()),
-		KVPath:          filepath.Join(paths.LiteralStateDir(), "deveco", "kv.json"),
+		KEKDir:           filepath.Join(paths.LiteralConfigDir(), "deveco"),
+		AuthPath:         paths.Resolve("DEVECO_AUTH_PATH", paths.DevEcoAuthCandidates()),
+		KVPath:           filepath.Join(paths.LiteralStateDir(), "deveco", "kv.json"),
 		VerifyIntervalMs: 600000,
 	}
 }
@@ -47,8 +47,8 @@ func DefaultDevEcoConfig() DevEcoConfig {
 type DevEcoCred struct {
 	AccessToken string
 	JWTToken    string
-	JWTExp      int64  // 毫秒时间戳
-	Expires     int64  // access token 过期时间（毫秒）
+	JWTExp      int64 // 毫秒时间戳
+	Expires     int64 // access token 过期时间（毫秒）
 	FetchedAt   time.Time
 	Valid       bool
 }
@@ -134,8 +134,8 @@ func (m *DevEcoCredManager) LoadCreds() (*DevEcoCred, error) {
 
 	var auth struct {
 		DevEco struct {
-			Type    string `json:"type"`
-			Access  struct {
+			Type   string `json:"type"`
+			Access struct {
 				Ciphertext string `json:"ciphertext"`
 				IV         string `json:"iv"`
 				AuthTag    string `json:"authTag"`

@@ -242,11 +242,11 @@ func writeResponsesPseudoStream(w http.ResponseWriter, oai *OpenAIResponse) {
 			},
 		})
 		write("response.function_call_arguments.delta", map[string]interface{}{
-			"type": "response.function_call_arguments.delta",
+			"type":         "response.function_call_arguments.delta",
 			"output_index": idx, "delta": tc.Function.Arguments,
 		})
 		write("response.function_call_arguments.done", map[string]interface{}{
-			"type": "response.function_call_arguments.done",
+			"type":         "response.function_call_arguments.done",
 			"output_index": idx, "arguments": tc.Function.Arguments,
 		})
 		write("response.output_item.done", map[string]interface{}{

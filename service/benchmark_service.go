@@ -28,9 +28,9 @@ type BenchmarkResult struct {
 	UpstreamLabel string  `json:"upstreamLabel"`
 	Model         string  `json:"model"`
 	Success       bool    `json:"success"`
-	DurationMs    int64   `json:"durationMs"`   // 总耗时（端到端）
-	OutputTokens  int     `json:"outputTokens"` // 输出 token
-	TPS           float64 `json:"tps"`          // output_tokens / (duration/1000)
+	DurationMs    int64   `json:"durationMs"`        // 总耗时（端到端）
+	OutputTokens  int     `json:"outputTokens"`      // 输出 token
+	TPS           float64 `json:"tps"`               // output_tokens / (duration/1000)
 	Content       string  `json:"content,omitempty"` // 返回文本（供比对）
 	ErrorMsg      string  `json:"errorMsg,omitempty"`
 	StartedAt     int64   `json:"startedAt"` // 开始时间戳（ms）
@@ -64,6 +64,8 @@ func benchmarkLabel(up string) string {
 		return "OpenCode Zen"
 	case "workbuddy":
 		return "腾讯 WorkBuddy"
+	case "mcloud":
+		return "移动云盘（灵犀）"
 	default:
 		return up
 	}
@@ -365,6 +367,7 @@ func (s *BenchmarkService) benchOne(ctx context.Context, url string, target Benc
 	res.Content = contentBuilder.String()
 	return res
 }
+
 // GetBenchResults 从 DB 读回历史测评结果（前端重进页面时恢复展示）。
 // outputTokens 由 TPS×duration 反推；Content 不持久化，留空。
 func (s *BenchmarkService) GetBenchResults() []BenchmarkResult {
@@ -395,7 +398,7 @@ func (s *BenchmarkService) GetBenchResults() []BenchmarkResult {
 }
 
 // dbBenchResult 将 BenchmarkResult 转换为 db.BenchResult
-func dbBenchResult(res BenchmarkResult) (db.BenchResult) {
+func dbBenchResult(res BenchmarkResult) db.BenchResult {
 	return db.BenchResult{
 		TPS:      res.TPS,
 		Duration: res.DurationMs,

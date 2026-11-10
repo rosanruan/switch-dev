@@ -28,6 +28,7 @@ type Server struct {
 	DevEco    *upstream.DevEcoUpstream
 	OpenCode  *upstream.OpenCodeUpstream
 	WorkBuddy *upstream.WorkBuddyUpstream
+	MCloud    *upstream.MCloudUpstream
 
 	// 免费 API 上游（动态注册，多供应商平级；key = provider id）
 	providerAPIsMu sync.RWMutex
@@ -44,12 +45,13 @@ type Server struct {
 }
 
 // NewServer 创建代理服务
-func NewServer(jy *upstream.JoyCodeUpstream, de *upstream.DevEcoUpstream, oc *upstream.OpenCodeUpstream, wb *upstream.WorkBuddyUpstream, host string, port int) *Server {
+func NewServer(jy *upstream.JoyCodeUpstream, de *upstream.DevEcoUpstream, oc *upstream.OpenCodeUpstream, wb *upstream.WorkBuddyUpstream, mc *upstream.MCloudUpstream, host string, port int) *Server {
 	return &Server{
 		JoyCode:      jy,
 		DevEco:       de,
 		OpenCode:     oc,
 		WorkBuddy:    wb,
+		MCloud:       mc,
 		ProviderAPIs: map[string]upstream.Upstream{},
 		Host:         host,
 		Port:         port,
@@ -286,9 +288,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	deStatus := s.DevEco.CredStatus()
 	ocStatus := s.OpenCode.CredStatus()
 	wbStatus := s.WorkBuddy.CredStatus()
+	mcStatus := s.MCloud.CredStatus()
 
 	resp := map[string]interface{}{
-		"ok":                 jcStatus.Valid || deStatus.Valid || ocStatus.Valid || wbStatus.Valid,
+		"ok":                 jcStatus.Valid || deStatus.Valid || ocStatus.Valid || wbStatus.Valid || mcStatus.Valid,
 		"service":            "switch-dev",
 		"joycodeCredValid":   jcStatus.Valid,
 		"joycodeUserId":      jcStatus.UserID,
@@ -297,6 +300,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"opencodeCredValid":  ocStatus.Valid,
 		"workbuddyCredValid": wbStatus.Valid,
 		"workbuddyUserId":    wbStatus.UserID,
+		"mcloudCredValid":    mcStatus.Valid,
 	}
 
 	// 免费 API 凭据状态（动态）
@@ -314,7 +318,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	resp["providerAPIs"] = providerCreds
 	if len(providerCreds) > 0 {
-		resp["ok"] = jcStatus.Valid || deStatus.Valid || ocStatus.Valid || wbStatus.Valid || anyProviderValid
+		resp["ok"] = jcStatus.Valid || deStatus.Valid || ocStatus.Valid || wbStatus.Valid || mcStatus.Valid || anyProviderValid
 	}
 
 	json.NewEncoder(w).Encode(resp)

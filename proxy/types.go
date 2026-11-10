@@ -38,7 +38,7 @@ type AnthropicContentBlock struct {
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   json.RawMessage `json:"content,omitempty"` // tool_result 的 content
+	Content   json.RawMessage `json:"content,omitempty"`  // tool_result 的 content
 	IsError   bool            `json:"is_error,omitempty"` // tool_result 是否为错误结果
 }
 
@@ -49,14 +49,14 @@ type AnthropicTool struct {
 }
 
 type AnthropicResponse struct {
-	ID           string               `json:"id"`
-	Type         string               `json:"type"`
-	Role         string               `json:"role"`
-	Model        string               `json:"model"`
+	ID           string                  `json:"id"`
+	Type         string                  `json:"type"`
+	Role         string                  `json:"role"`
+	Model        string                  `json:"model"`
 	Content      []AnthropicContentBlock `json:"content"`
-	StopReason   string               `json:"stop_reason"`
-	StopSequence *string              `json:"stop_sequence"`
-	Usage        AnthropicUsage       `json:"usage"`
+	StopReason   string                  `json:"stop_reason"`
+	StopSequence *string                 `json:"stop_sequence"`
+	Usage        AnthropicUsage          `json:"usage"`
 }
 
 type AnthropicUsage struct {
@@ -69,14 +69,14 @@ type AnthropicUsage struct {
 // ====== OpenAI 请求/响应结构 ======
 
 type OpenAIRequest struct {
-	Model       string           `json:"model"`
-	Messages    []OpenAIMessage  `json:"messages"`
-	MaxTokens   int              `json:"max_tokens,omitempty"`
-	Stream      bool             `json:"stream,omitempty"`
-	Temperature *float64         `json:"temperature,omitempty"`
-	TopP        *float64         `json:"top_p,omitempty"`
-	Stop        []string         `json:"stop,omitempty"`
-	Tools       []OpenAITool     `json:"tools,omitempty"`
+	Model       string          `json:"model"`
+	Messages    []OpenAIMessage `json:"messages"`
+	MaxTokens   int             `json:"max_tokens,omitempty"`
+	Stream      bool            `json:"stream,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
+	Stop        []string        `json:"stop,omitempty"`
+	Tools       []OpenAITool    `json:"tools,omitempty"`
 
 	// JoyCode 业务字段
 	Tenant        string `json:"tenant,omitempty"`
@@ -127,15 +127,15 @@ type OpenAIResponse struct {
 }
 
 type OpenAIChoice struct {
-	Index        int            `json:"index"`
-	Message      OpenAIMessage  `json:"message"`
-	FinishReason string         `json:"finish_reason"`
+	Index        int           `json:"index"`
+	Message      OpenAIMessage `json:"message"`
+	FinishReason string        `json:"finish_reason"`
 }
 
 type OpenAIUsage struct {
-	PromptTokens     int                        `json:"prompt_tokens"`
-	CompletionTokens int                        `json:"completion_tokens"`
-	TotalTokens      int                        `json:"total_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 	// 缓存字段
 	CacheReadInputTokens int `json:"cache_read_input_tokens,omitempty"` // Anthropic 标准
 	PromptTokensDetails  struct {
@@ -181,9 +181,9 @@ type LogEntry struct {
 	OutputTokens   int     `json:"outputTokens,omitempty"`   // 输出 token
 	CacheHitTokens int     `json:"cacheHitTokens,omitempty"` // 命中缓存的输入 token
 	Cost           float64 `json:"cost,omitempty"`           // 本次费用（美元）
-	CostText     string  `json:"costText,omitempty"`     // 费率说明（如 "$1.40/M 入 / $4.40/M 出"）
-	RealModel    string  `json:"realModel,omitempty"`    // 响应里真实使用的模型
-	FirstByteMs  int64   `json:"firstByteMs,omitempty"`  // 首字节用时（ms，伪流式下 ≈ 总用时）
+	CostText       string  `json:"costText,omitempty"`       // 费率说明（如 "$1.40/M 入 / $4.40/M 出"）
+	RealModel      string  `json:"realModel,omitempty"`      // 响应里真实使用的模型
+	FirstByteMs    int64   `json:"firstByteMs,omitempty"`    // 首字节用时（ms，伪流式下 ≈ 总用时）
 
 	// 不序列化到前端/JSONL，仅供 db 层记录 source
 	UserAgent string `json:"-"`

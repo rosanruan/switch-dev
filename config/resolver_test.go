@@ -109,7 +109,7 @@ func TestIsUpstreamEnabledDefault(t *testing.T) {
 func TestIsUpstreamEnabledToggle(t *testing.T) {
 	c := newResolveConfig()
 	c.Upstreams = map[string]UpstreamSettings{
-		"deveco": {Enabled: false},
+		"deveco":  {Enabled: false},
 		"joycode": {Enabled: true},
 	}
 	if c.IsUpstreamEnabled("deveco") {

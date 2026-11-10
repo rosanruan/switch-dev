@@ -18,6 +18,32 @@
 
 ## [Unreleased]
 
+### 新增
+- 新增「中国移动云盘（灵犀）」渠道：复用移动云盘 App 登录态（RCS token 本地读 `accountdb.db`，Basic 头纯本地拼装），模型 id 形如 `mc/blian_qwen38_max`，支持流式（上游自有 SSE 实时转 OpenAI SSE）与非流式
+  - 模型列表实时拉取（`chat/config/get`），自动跟随上游新模型；RCS token 30 天滚动，过期提示「打开 App 续期」
+  - 凭据页/仪表盘/模型页/测评页/日志页均已接入渠道卡片与徽章
+- WorkBuddy 模型支持动态拉取（调 `GET /v2/models` OpenAI 兼容端点，失败自动回退 DB 缓存或种子白名单）
+- WorkBuddy 种子白名单新增 `wb/hy4-preview`（Hy4 Preview），API 拉取失败时作为兜底
+- 使用趋势柱形图：本周/本月周期固定为完整范围（本周=周一~周日，本月=1日~月末），柱宽不再随数据量变化
+
+### 修复
+- 修复测评页切换 tab 再回来后 token/速率等结果不显示的问题：测评结果现在随进度实时持久化到 localStorage（只存指标、不含返回正文），切回时同步恢复、无需等待 DB；DB 历史结果仍在挂载后合并，恢复失败也会 console 告警而非静默吞掉
+- 修复移动云盘请求在日志列表里输入/输出 token 都为空的问题：灵犀任何帧都不返回 usage，现在流式末帧与非流式聚合响应都补上字符估算的 usage（输入按折叠后的 dialogue、输出按正文+思考内容，约 3 字符 1 token，与既有估算口径一致），日志 token 与费用估算随之生效
+- 修复移动云盘模型（含 GLM-5.3 / `mc/huoshan_glm_5_3`）与 DevEco `glm-5.3` 不计费的问题：内置费率库补充 mcloud 各模型与 `glm-5.3` 费率（按对应公开模型同档价格估算；九天无公开费率不计，DevEco 的 `GLM-5.3` wire 名经小写归一命中同一条目），并新增「升级合并」——已有 `pricing.json` 的老安装启动时自动补入内置新增费率（不覆盖用户自定义），不再只有全新安装才生效
+- 修复移动云盘模型测评/Anthropic 入口报 502「切换模型失败 code=01000001 参数错误」：`/v1/messages` 转换时未剥 `mc/` 前缀，导致 `config/set` 收到 `mc/blian_qwen38_max`；新增 `AnthropicToOpenAIMCloud` 转换器并在上游折叠时兜底剥前缀
+- 修复 macOS 上 `wails3 dev` 前端开发服务器 IPv4/IPv6 不通导致界面空白的问题（Vite 强制绑定 `127.0.0.1`）
+- 修复 macOS 上新版本更新提示不显示的问题：新增 `WindowShow` 事件监听（补充 `WindowFocus`，macOS 关闭窗口是隐藏而非销毁），前端挂载时主动检查更新兜底
+- 修复 `make deploy` 不打包 deb 的问题（`build-linux-amd64` 把二进制移到 `dist/` 后 nfpm 找不到文件；上传 glob 双下划线匹配不上重命名的文件名）
+- 修复 `MergeModels` 中 OpenCode 过滤会原地改写调用方入参、各上游 `localModels` 遗漏 `Wire` 字段导致 `TestLocalModelsCarryWire` 失败
+
+### 变更
+- 界面删除按钮从红色 `✕` 改为灰色垃圾桶 SVG 图标（`TrashIcon` 组件），视觉上更温和
+- README 上游清单更新：新增移动云盘（灵犀）渠道说明（凭据来源与 30 天续期、`mc/` 模型前缀、服务端模型偏好切换、私有 SSE 实时转换、usage 估算），内置上游计数与架构图同步为四上游
+- `MergeModels` 补全 `Reasoning` 字段，支持推理模型元数据在目录同步中流转
+
+### 废弃
+- OpenCode Zen 渠道废弃：README 及上游清单不再列出（代码暂时保留以兼容既有配置与历史数据）
+
 ## [0.1.6] - 2026-11-03
 
 ### 修复

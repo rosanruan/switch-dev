@@ -47,10 +47,10 @@ type ModelUsage struct {
 	Percent    float64 `json:"percent"` // token 占比 0-100
 }
 
-// builtInProviderLabel 内置 4 上游的显示名（统一用英文 name）
+// builtInProviderLabel 内置上游的显示名（统一用英文 name）
 func builtInProviderLabel(up string) string {
 	switch up {
-	case "joycode", "deveco", "opencode", "workbuddy":
+	case "joycode", "deveco", "opencode", "workbuddy", "mcloud":
 		return up
 	default:
 		return ""
@@ -223,6 +223,7 @@ func convertDBUsageStats(d *db.UsageStats) *UsageStats {
 	}
 	return stats
 }
+
 // providerNamer 返回一个把免费供应商 id 解析为显示名的闭包（数据来自运行中的代理）。
 func (s *LogService) providerNamer() func(string) string {
 	return func(id string) string {

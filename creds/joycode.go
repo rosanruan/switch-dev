@@ -103,12 +103,12 @@ func (m *JoyCodeCredManager) LoadCredsFromVscdb() (*JoyCodeCred, error) {
 	// 解析 JSON
 	var data struct {
 		JoyCoderUser struct {
-			PtKey       string `json:"ptKey"`
-			UserName    string `json:"userName"`
-			UserID      string `json:"userId"`
-			LoginType   string `json:"loginType"`
-			OrgFullName string `json:"orgFullName"`
-			Tenant      string `json:"tenant"`
+			PtKey        string `json:"ptKey"`
+			UserName     string `json:"userName"`
+			UserID       string `json:"userId"`
+			LoginType    string `json:"loginType"`
+			OrgFullName  string `json:"orgFullName"`
+			Tenant       string `json:"tenant"`
 			ColorBaseURL string `json:"colorBaseUrl"`
 		} `json:"joyCoderUser"`
 	}

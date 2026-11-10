@@ -299,8 +299,8 @@ func providerAPIModelsGrouped() []UpstreamModels {
 
 // localOnlyModels 目录快照（core 未注入时用；目录本身已含种子兜底）
 func localOnlyModels() []UpstreamModels {
-	out := make([]UpstreamModels, 0, 4)
-	for _, up := range []string{"joycode", "deveco", "opencode", "workbuddy"} {
+	out := make([]UpstreamModels, 0, 5)
+	for _, up := range []string{"joycode", "deveco", "opencode", "workbuddy", "mcloud"} {
 		out = append(out, UpstreamModels{
 			Upstream: up,
 			Source:   catalogSource(up),

@@ -16,18 +16,18 @@ import (
 
 // CatalogProvider 目录中的供应商（来自 provider_apis_catalog.json）
 type CatalogProvider struct {
-	ID                string           `json:"id"`
-	Name              string           `json:"name"`
-	Region            string           `json:"region"` // "international" | "domestic"
-	BaseURL           string           `json:"base_url"`
-	GetAPIKeyURL      string           `json:"get_api_key_url"`
-	AuthMethod        string           `json:"auth_method"`
-	CreditCardReq     bool             `json:"credit_card_required"`
-	OpenAICompatible  bool             `json:"openai_compatible"`
-	Protocol          string           `json:"protocol,omitempty"` // 出站协议：openai（默认）| anthropic；空值按 OpenAICompatible 推断
-	MaxContext        string           `json:"max_context"`         // "1M"、"131K" 等文本
-	FreeModelsCount   int              `json:"free_models_count"`
-	FreeModels        []CatalogModel   `json:"free_models"`
+	ID               string         `json:"id"`
+	Name             string         `json:"name"`
+	Region           string         `json:"region"` // "international" | "domestic"
+	BaseURL          string         `json:"base_url"`
+	GetAPIKeyURL     string         `json:"get_api_key_url"`
+	AuthMethod       string         `json:"auth_method"`
+	CreditCardReq    bool           `json:"credit_card_required"`
+	OpenAICompatible bool           `json:"openai_compatible"`
+	Protocol         string         `json:"protocol,omitempty"` // 出站协议：openai（默认）| anthropic；空值按 OpenAICompatible 推断
+	MaxContext       string         `json:"max_context"`        // "1M"、"131K" 等文本
+	FreeModelsCount  int            `json:"free_models_count"`
+	FreeModels       []CatalogModel `json:"free_models"`
 }
 
 // EffectiveProtocol 返回目录条目的出站协议：显式 protocol 优先，否则按 openai_compatible 推断
@@ -45,18 +45,18 @@ func (c *CatalogProvider) EffectiveProtocol() string {
 type CatalogModel struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	Context   string `json:"context"`   // "1M"、"131K"、"32K" 文本
+	Context   string `json:"context"`    // "1M"、"131K"、"32K" 文本
 	RateLimit string `json:"rate_limit"` // 免费方式/限流描述
 	// 能力标记（来自上游目录，用于前端展示/过滤）
-	Reasoning       bool `json:"reasoning,omitempty"`        // 思维链/推理模型
-	ToolCall        bool `json:"tool_call,omitempty"`        // 支持函数/工具调用
-	Vision          bool `json:"vision,omitempty"`           // 支持图片/多模态输入
+	Reasoning        bool `json:"reasoning,omitempty"`         // 思维链/推理模型
+	ToolCall         bool `json:"tool_call,omitempty"`         // 支持函数/工具调用
+	Vision           bool `json:"vision,omitempty"`            // 支持图片/多模态输入
 	StructuredOutput bool `json:"structured_output,omitempty"` // 支持结构化输出（JSON schema）
 }
 
 // Catalog 目录根结构
 type Catalog struct {
-	Providers []CatalogProvider `json:"providers"`
+	Providers  []CatalogProvider `json:"providers"`
 	Deprecated []struct {
 		ID     string `json:"id"`
 		Name   string `json:"name"`

@@ -15,8 +15,9 @@
 
 ## 🎯 它解决什么问题
 
-你机器上装着的 JoyCode、DevEco Code、WorkBuddy，后台都自带模型额度——
-京东云的 JoyAI / Kimi / GLM、华为的 GLM-5.1、腾讯 CodeBuddy 的 GLM / MiniMax / Kimi / DeepSeek / 混元。
+你机器上装着的 JoyCode、DevEco Code、WorkBuddy、中国移动云盘，后台都自带模型额度——
+京东云的 JoyAI / Kimi / GLM、华为的 GLM-5.1、腾讯 CodeBuddy 的 GLM / MiniMax / Kimi / DeepSeek / 混元、
+移动云盘「灵犀」的 Qwen / GLM / DeepSeek / 九天。
 
 但这些额度是**登录态**：请求要动态签名、要注入业务字段、Token 会过期要刷新，
 没法直接填进 Claude Code。
@@ -54,7 +55,7 @@ Switch Dev 的设计围绕两件事：**把各家登录态搬成统一接口**�
 | | 为什么特别 |
 |---|---|
 | 🔐 **凭据零硬编码** | 启动时从各工具本地存储动态读取登录态，失效自动恢复，重登免重启 |
-| 🧩 **四上游统一抽象** | JoyCode / DevEco / OpenCode / WorkBuddy 实现同一套 `Upstream` 接口，路由层无差别遍历 |
+| 🧩 **四上游统一抽象** | JoyCode / DevEco / WorkBuddy / 移动云盘（灵犀）实现同一套 `Upstream` 接口，路由层无差别遍历 |
 | 🪜 **三级降级链** | auto 优先级链、manual 按模型配链、UA 路由按客户端 User-Agent 分流；每条链末尾都有全局兜底 |
 | 🌊 **流式全适配** | 上游统一非流式时，代理在本地把完整响应拆成 SSE；WorkBuddy 反向强制流式，内部聚合后再下发 |
 | 🛰️ **自带供应商体系** | 可接入任意 OpenAI / Anthropic 兼容 API；Key 经 argon2id + AES-GCM 加密落盘，支持主密码/恢复码/闲置锁定，`.sds` 加密文件可在设备间安全分享 |
@@ -74,8 +75,9 @@ Switch Dev 只搬运你已有的登录态，**不代注册、不代登录**。�
 | **JoyCode** | [官网下载](https://joycode.jd.com) | 客户端扫码登录，确认 JoyCode 内能正常发起对话；⚠️ **使用时需保持 JoyCode 客户端在线**（见下方说明） |
 | **DevEco Code** | `npm i -g @deveco/deveco-code` | ⚠️ 需先[注册华为开发者账号并完成实名认证](https://developer.huawei.com)，再 `deveco auth login` 登录；确认 DevEco Studio / DevEco Code 内可正常调用模型 |
 | **WorkBuddy** | [官网下载](https://workbuddy.app) | 客户端登录，确认 WorkBuddy 内能正常发起对话 |
+| **中国移动云盘** | [官网下载](https://yun.139.com) | App 登录后确认「灵犀」AI 助手能正常对话；RCS token 30 天滚动，**过期后打开 App 登录即自动续期** |
 
-> 装一个就能用；四个全装就是「全家桶」。首次启动会自动探测安装状态并引导登录。
+> 装一个就能用；全装就是「全家桶」。首次启动会自动探测安装状态并引导登录。
 > 若某上游单独使用时就无法调用（未登录、未实名、额度耗尽），Switch Dev 里同样会失败——请先在原工具里排查。
 
 > **JoyCode 特别提示：调用时需保持 JoyCode 官方客户端打开并登录。**
@@ -106,7 +108,7 @@ Switch Dev 只搬运你已有的登录态，**不代注册、不代登录**。�
 ·
 **cc-switch**：baseURL `http://127.0.0.1:8787`，apiKey 任意，模型 `auto`。
 
-> `auto` 按你配置的优先级链自动选模型；也可指定具体模型（如 `glm-5.1`、`wb/hy3`）。
+> `auto` 按你配置的优先级链自动选模型；也可指定具体模型（如 `glm-5.1`、`wb/hy3`、`mc/blian_qwen38_max`）。
 
 ---
 
@@ -118,11 +120,11 @@ Switch Dev 只搬运你已有的登录态，**不代注册、不代登录**。�
 |------|---------|---------|
 | **JoyCode** | `state.vscdb`（纯 Go `modernc.org/sqlite` 读取，无需外部 sqlite3） | Color 网关签名 + 业务字段注入 + 401 重试 |
 | **DevEco** | 三层 AES-256-GCM 解密 | Bearer + Chat-Id + JWT 自动刷新 |
-| **OpenCode** | 明文 `auth.json` | 标准 OpenAI 兼容 |
 | **WorkBuddy** | 明文 info + refreshToken 续期 | 上游强制 `stream:true`，代理聚合 SSE 后再下发；模型用 `wb/` 前缀隔离重名 |
+| **移动云盘（灵犀）** | `accountdb.db` 里的 RCS token（30 天滚动，打开 App 自动续期），Basic 头纯本地拼装 | 模型是**服务端账号级偏好**：先 `config/set` 切模型再发 chat（互斥锁串行化，首帧确认后释放）；私有 SSE 实时转标准 OpenAI SSE；模型用 `mc/` 前缀（如 `mc/blian_qwen38_max`），清单实时拉取自动跟随上游新模型；多轮对话折叠成单条 dialogue，超长自动丢弃最早轮次 |
 
 路径解析跨平台且单一真相（macOS `~/Library/Application Support`、Linux `~/.config`、Windows `%APPDATA%`），
-并支持 `JOYCODE_VSCDB` / `WORKBUDDY_INFO_PATH` / `OPENCODE_AUTH_PATH` 等环境变量覆盖。
+并支持 `JOYCODE_VSCDB` / `WORKBUDDY_INFO_PATH` / `MCLOUD_ACCOUNTDB` 等环境变量覆盖。
 
 ### 三级路由 + 降级
 
@@ -135,6 +137,7 @@ Switch Dev 只搬运你已有的登录态，**不代注册、不代登录**。�
 
 - 上游统一走非流式调用，下游要流式时，代理在本地把完整 JSON 拆成标准 SSE 事件（伪流式）
 - **WorkBuddy 例外**：非流式返回 `code:11101`，上游强制 `stream:true`，`aggregateOpenAISSE` 把 chunk 聚合成完整响应后，再复用非流式处理逻辑
+- **移动云盘例外**：上游是私有 `AI-chat-sse-simple` SSE 协议，适配器逐帧实时转成标准 OpenAI SSE（真流式，首字延迟≈上游首字）；上游不返回 usage，输入/输出 token 按字符估算后随末帧下发，日志与费用估算照常工作
 - 完整支持 Anthropic `/v1/messages`、OpenAI `/v1/chat/completions`、`/v1/responses`，含 SSE 错误透传
 
 ### 供应商生态
@@ -209,16 +212,16 @@ Claude Code / Codex / cc-switch
 │       ↕ Wails 绑定 + 事件推送                                │
 │  Go 后端                                                     │
 │   ├ 代理核心：协议转换 / 签名 / SSE / auto·manual·UA 降级    │
-│   ├ 上游适配器：JoyCode / DevEco / OpenCode / WorkBuddy      │
+│   ├ 上游适配器：JoyCode / DevEco / WorkBuddy / 移动云盘      │
 │   ├ 供应商：自定义接入 / argon2id 加密 / .sds 分享           │
-│   └ 凭据：vscdb / AES 三层解密 / JWT 刷新 / 钥匙串           │
+│   └ 凭据：vscdb / AES 三层解密 / JWT 刷新 / RCS token / 钥匙串 │
 │                                                              │
 │  独立 HTTP 服务 :8787（与 GUI 共存，可无界面运行）           │
 └──────────────────────────────────────────────────────────────┘
    │           │           │           │
    ▼           ▼           ▼           ▼
-京东云        华为云       OpenCode     腾讯云
-(JoyCode)     (DevEco)     Zen          (WorkBuddy)
+京东云        华为云       腾讯云      中国移动云盘
+(JoyCode)     (DevEco)     (WorkBuddy)  (灵犀)
 ```
 
 ---
@@ -290,7 +293,7 @@ switch-dev/
 用设置主密码时获得的恢复码重置。恢复码也丢失时，只能「销毁现有配置」，所有供应商和 Key 删除后重新添加。
 
 **Q：支持流式吗？**
-支持。上游非流式时代理本地拆 SSE；WorkBuddy 反向强制流式，内部聚合后再下发，客户端体验一致。
+支持。上游非流式时代理本地拆 SSE；WorkBuddy 反向强制流式，内部聚合后再下发；移动云盘的私有 SSE 则逐帧实时转成标准 OpenAI SSE，客户端体验一致。
 
 **Q：Claude Code 和 Codex 能同时用吗？**
 能。分别走 Anthropic / OpenAI 入口，共用 8787 端口；UA 路由还能让两个客户端自动分流到不同模型。

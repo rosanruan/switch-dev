@@ -73,6 +73,7 @@ func TestLocalModelsCarryWire(t *testing.T) {
 	cases := map[string]map[string]string{
 		"deveco":    {"glm-5.1": "GLM-5.1"},
 		"workbuddy": {"wb/glm-5.0": "glm-5.0"},
+		"mcloud":    {"mc/blian_qwen38_max": "blian_qwen38_max"},
 	}
 	for upstreamName, want := range cases {
 		for _, m := range MergeModels(upstreamName, nil, false) {
@@ -103,6 +104,33 @@ func TestAnthropicToOpenAIDevecoNoSilentRewrite(t *testing.T) {
 	}
 	if known.MaxTokens != DevEcoModels[0].Output {
 		t.Errorf("MaxTokens = %d, want %d", known.MaxTokens, DevEcoModels[0].Output)
+	}
+}
+
+// TestAnthropicToOpenAIMCloudStripsPrefix 回归：Anthropic 入口（/v1/messages，测评默认）
+// 走 mcloud 时必须剥掉 mc/ 前缀 —— 旧代码落进 default 通用转换器，把 mc/blian_qwen38_max
+// 原样发给上游 config/set，被上游判 01000001 参数错误。
+func TestAnthropicToOpenAIMCloudStripsPrefix(t *testing.T) {
+	SetCatalog(BuildCatalog(nil))
+
+	got := AnthropicToOpenAIMCloud(&AnthropicRequest{Model: "mc/blian_qwen38_max", MaxTokens: 1000})
+	if got.Model != "blian_qwen38_max" {
+		t.Errorf("converter Model = %q, want blian_qwen38_max", got.Model)
+	}
+
+	// 路由层 switch 必须命中 mcloud 专用转换器，而不是 default 通用转换
+	s := &Server{}
+	body, err := s.buildAnthropicOpenAIBody(
+		&AnthropicRequest{Model: "mc/blian_qwen38_max", MaxTokens: 1000},
+		ModelRef{Upstream: "mcloud", Model: "mc/blian_qwen38_max"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"model":"blian_qwen38_max"`) {
+		t.Errorf("Anthropic 入口 body = %s", body)
+	}
+	if strings.Contains(string(body), `"model":"mc/`) {
+		t.Errorf("body 仍带 mc/ 前缀: %s", body)
 	}
 }
 

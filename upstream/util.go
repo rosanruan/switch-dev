@@ -1,8 +1,8 @@
 package upstream
 
 import (
-	"math/big"
 	"crypto/rand"
+	"math/big"
 )
 
 // randString 生成指定长度的随机字符串（字母数字）

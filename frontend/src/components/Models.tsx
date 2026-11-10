@@ -8,12 +8,14 @@ const UPSTREAM_LABEL: Record<string, string> = {
   joycode: "JoyCode",
   deveco: "DevEco",
   workbuddy: "WorkBuddy",
+  mcloud: "移动云盘",
 };
 
 const UPSTREAM_COLOR: Record<string, string> = {
   joycode: "bg-[var(--color-success)]/20 text-[var(--color-success)]",
   deveco: "bg-[var(--color-danger)]/20 text-[var(--color-danger)]",
   workbuddy: "bg-pink-500/20 text-pink-400",
+  mcloud: "bg-sky-500/20 text-sky-400",
 };
 
 // 供应商 source 形如 "名称 (http://...)"，取括号前的名称

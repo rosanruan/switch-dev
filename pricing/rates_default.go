@@ -7,6 +7,13 @@ package pricing
 // 如需更新默认费率，重新生成本文件或编辑后保存到配置文件。
 
 var DefaultRates = []Price{
+	{ModelID: "blian_deepseek_v4_flash", DisplayName: "DeepSeek V4 Flash", InputPerMillion: 0.14, OutputPerMillion: 0.28, CacheRead: 0.0028, CacheCreation: 0},
+	{ModelID: "blian_deepseek_v4_pro", DisplayName: "DeepSeek V4 Pro", InputPerMillion: 0.435, OutputPerMillion: 0.87, CacheRead: 0.003625, CacheCreation: 0},
+	{ModelID: "blian_qwen35_plus", DisplayName: "Qwen3.5 Plus", InputPerMillion: 0.26, OutputPerMillion: 1.56, CacheRead: 0.052, CacheCreation: 0},
+	{ModelID: "blian_qwen36_plus", DisplayName: "Qwen3.6 Plus", InputPerMillion: 0.325, OutputPerMillion: 1.95, CacheRead: 0.065, CacheCreation: 0},
+	{ModelID: "blian_qwen37_plus", DisplayName: "Qwen3.7 Plus", InputPerMillion: 0.4, OutputPerMillion: 1.6, CacheRead: 0.08, CacheCreation: 0},
+	{ModelID: "blian_qwen38_flash", DisplayName: "Qwen3.8 Flash", InputPerMillion: 0.1875, OutputPerMillion: 1.125, CacheRead: 0.0375, CacheCreation: 0},
+	{ModelID: "blian_qwen38_max", DisplayName: "Qwen3.8 Max", InputPerMillion: 2.5, OutputPerMillion: 7.5, CacheRead: 0.25, CacheCreation: 0},
 	{ModelID: "claude-3-5-haiku-20241022", DisplayName: "Claude 3.5 Haiku", InputPerMillion: 0.8, OutputPerMillion: 4, CacheRead: 0.08, CacheCreation: 1},
 	{ModelID: "claude-3-5-sonnet-20241022", DisplayName: "Claude 3.5 Sonnet", InputPerMillion: 3, OutputPerMillion: 15, CacheRead: 0.3, CacheCreation: 3.75},
 	{ModelID: "claude-fable-5", DisplayName: "Claude Fable 5", InputPerMillion: 10, OutputPerMillion: 50, CacheRead: 1, CacheCreation: 12.5},
@@ -67,6 +74,7 @@ var DefaultRates = []Price{
 	{ModelID: "glm-5-turbo", DisplayName: "GLM-5-Turbo", InputPerMillion: 1.2, OutputPerMillion: 4, CacheRead: 0.24, CacheCreation: 0},
 	{ModelID: "glm-5.1", DisplayName: "GLM-5.1", InputPerMillion: 1.4, OutputPerMillion: 4.4, CacheRead: 0.26, CacheCreation: 0},
 	{ModelID: "glm-5.2", DisplayName: "GLM-5.2", InputPerMillion: 1.4, OutputPerMillion: 4.4, CacheRead: 0.26, CacheCreation: 0},
+	{ModelID: "glm-5.3", DisplayName: "GLM-5.3", InputPerMillion: 1.4, OutputPerMillion: 4.4, CacheRead: 0.26, CacheCreation: 0},
 	{ModelID: "glm-5v-turbo", DisplayName: "GLM-5V-Turbo", InputPerMillion: 1.2, OutputPerMillion: 4, CacheRead: 0.24, CacheCreation: 0},
 	{ModelID: "gpt-4.1", DisplayName: "GPT-4.1", InputPerMillion: 2, OutputPerMillion: 8, CacheRead: 0.5, CacheCreation: 0},
 	{ModelID: "gpt-4.1-mini", DisplayName: "GPT-4.1 Mini", InputPerMillion: 0.4, OutputPerMillion: 1.6, CacheRead: 0.1, CacheCreation: 0},
@@ -141,6 +149,7 @@ var DefaultRates = []Price{
 	{ModelID: "grok-4.5-build", DisplayName: "Grok 4.5 Build", InputPerMillion: 2, OutputPerMillion: 6, CacheRead: 0.3, CacheCreation: 0},
 	{ModelID: "grok-build-0.1", DisplayName: "Grok Build 0.1", InputPerMillion: 1, OutputPerMillion: 2, CacheRead: 0.2, CacheCreation: 0},
 	{ModelID: "grok-code-fast-1", DisplayName: "Grok Build 0.1 (Code Fast Alias)", InputPerMillion: 1, OutputPerMillion: 2, CacheRead: 0.2, CacheCreation: 0},
+	{ModelID: "huoshan_glm_5_3", DisplayName: "GLM-5.3", InputPerMillion: 1.4, OutputPerMillion: 4.4, CacheRead: 0.26, CacheCreation: 0},
 	{ModelID: "hunyuan-hy3", DisplayName: "Hunyuan Hy3", InputPerMillion: 0.14, OutputPerMillion: 0.56, CacheRead: 0.035, CacheCreation: 0},
 	{ModelID: "hy3", DisplayName: "Hunyuan Hy3", InputPerMillion: 0.14, OutputPerMillion: 0.56, CacheRead: 0.035, CacheCreation: 0},
 	{ModelID: "k3", DisplayName: "Kimi K3", InputPerMillion: 3, OutputPerMillion: 15, CacheRead: 0.3, CacheCreation: 0},
@@ -195,4 +204,5 @@ var DefaultRates = []Price{
 	{ModelID: "step-3.5-flash", DisplayName: "Step 3.5 Flash", InputPerMillion: 0.1, OutputPerMillion: 0.3, CacheRead: 0.02, CacheCreation: 0},
 	{ModelID: "step-3.5-flash-2603", DisplayName: "Step 3.5 Flash 2603", InputPerMillion: 0.1, OutputPerMillion: 0.3, CacheRead: 0.02, CacheCreation: 0},
 	{ModelID: "step-3.7-flash", DisplayName: "Step 3.7 Flash", InputPerMillion: 0.19, OutputPerMillion: 1.13, CacheRead: 0.04, CacheCreation: 0},
+	{ModelID: "vlm_huoshan_2_0_lite_thinking_vision", DisplayName: "Seed 2.0 Lite", InputPerMillion: 0.08, OutputPerMillion: 0.5, CacheRead: 0.017, CacheCreation: 0},
 }

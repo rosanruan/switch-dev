@@ -12,24 +12,24 @@ import (
 
 // OpenCode 配置
 type OpenCodeConfig struct {
-	BaseURL         string
-	AuthPath        string
+	BaseURL          string
+	AuthPath         string
 	VerifyIntervalMs int
 }
 
 func DefaultOpenCodeConfig() OpenCodeConfig {
 	return OpenCodeConfig{
-		BaseURL:         "https://opencode.ai/zen/v1",
-		AuthPath:        paths.Resolve("OPENCODE_AUTH_PATH", paths.OpenCodeAuthCandidates()),
+		BaseURL:          "https://opencode.ai/zen/v1",
+		AuthPath:         paths.Resolve("OPENCODE_AUTH_PATH", paths.OpenCodeAuthCandidates()),
 		VerifyIntervalMs: 600000,
 	}
 }
 
 // OpenCodeCred 运行时凭据
 type OpenCodeCred struct {
-	APIKey     string
-	FetchedAt  time.Time
-	Valid      bool
+	APIKey    string
+	FetchedAt time.Time
+	Valid     bool
 }
 
 // OpenCodeCredManager OpenCode 凭据管理器

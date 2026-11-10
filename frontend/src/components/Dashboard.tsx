@@ -11,6 +11,7 @@ const UPSTREAM_LABEL: Record<string, string> = {
   joycode: "JoyCode",
   deveco: "DevEco",
   workbuddy: "WorkBuddy",
+  mcloud: "移动云盘",
 };
 
 interface Props {
@@ -54,7 +55,10 @@ export default function Dashboard({ proxy, creds, config, onGoCredentials }: Pro
   // 已配置的上游是否全部无效（用于空状态提示）。OpenCode 不在默认流程内，不计入。
   const allInvalid =
     !creds ||
-    (!creds.joycode?.valid && !creds.deveco?.valid && !creds.workbuddy?.valid);
+    (!creds.joycode?.valid &&
+      !creds.deveco?.valid &&
+      !creds.workbuddy?.valid &&
+      !creds.mcloud?.valid);
 
   // 根据当前配置计算实际会用的模型链（用于显示）
   const { chainText, chainLength } = (() => {

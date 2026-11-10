@@ -15,15 +15,15 @@ import (
 
 // ResponsesRequest POST /v1/responses 请求
 type ResponsesRequest struct {
-	Model         string          `json:"model"`
-	Input         json.RawMessage `json:"input"` // string | []ResponseInputItem
-	Instructions  string          `json:"instructions,omitempty"`
-	Stream        bool            `json:"stream,omitempty"`
-	Tools         []ResponseTool  `json:"tools,omitempty"`
-	ToolChoice    interface{}     `json:"tool_choice,omitempty"`
-	Temperature   *float64        `json:"temperature,omitempty"`
-	TopP          *float64        `json:"top_p,omitempty"`
-	MaxOutputTokens int           `json:"max_output_tokens,omitempty"`
+	Model           string          `json:"model"`
+	Input           json.RawMessage `json:"input"` // string | []ResponseInputItem
+	Instructions    string          `json:"instructions,omitempty"`
+	Stream          bool            `json:"stream,omitempty"`
+	Tools           []ResponseTool  `json:"tools,omitempty"`
+	ToolChoice      interface{}     `json:"tool_choice,omitempty"`
+	Temperature     *float64        `json:"temperature,omitempty"`
+	TopP            *float64        `json:"top_p,omitempty"`
+	MaxOutputTokens int             `json:"max_output_tokens,omitempty"`
 	// PreviousResponseID / store / reasoning 等高级字段忽略
 }
 
@@ -58,24 +58,24 @@ type responseInputContentPart struct {
 
 // ResponsesResponse /v1/responses 成功响应
 type ResponsesResponse struct {
-	ID        string          `json:"id"`
-	Object    string          `json:"object"`
-	CreatedAt int64           `json:"created_at"`
-	Model     string          `json:"model"`
+	ID        string           `json:"id"`
+	Object    string           `json:"object"`
+	CreatedAt int64            `json:"created_at"`
+	Model     string           `json:"model"`
 	Output    []ResponseOutput `json:"output"`
-	Usage     *ResponsesUsage `json:"usage,omitempty"`
+	Usage     *ResponsesUsage  `json:"usage,omitempty"`
 }
 
 // ResponseOutput output 数组项（message 或 function_call）
 type ResponseOutput struct {
-	Type     string                  `json:"type"` // message | function_call
-	ID       string                  `json:"id,omitempty"`
-	Role     string                  `json:"role,omitempty"`
-	Content  []ResponseOutputContent `json:"content,omitempty"`
-	CallID   string                  `json:"call_id,omitempty"`
-	Name     string                  `json:"name,omitempty"`
-	Arguments string                 `json:"arguments,omitempty"`
-	Status   string                  `json:"status,omitempty"`
+	Type      string                  `json:"type"` // message | function_call
+	ID        string                  `json:"id,omitempty"`
+	Role      string                  `json:"role,omitempty"`
+	Content   []ResponseOutputContent `json:"content,omitempty"`
+	CallID    string                  `json:"call_id,omitempty"`
+	Name      string                  `json:"name,omitempty"`
+	Arguments string                  `json:"arguments,omitempty"`
+	Status    string                  `json:"status,omitempty"`
 }
 
 // ResponseOutputContent message 内容片段
@@ -215,7 +215,7 @@ func responsesInputToMessages(input json.RawMessage, instructions string) ([]map
 		case "function_call":
 			// 历史中的 assistant function_call -> assistant tool_calls
 			messages = append(messages, map[string]interface{}{
-				"role": "assistant",
+				"role":    "assistant",
 				"content": nil,
 				"tool_calls": []map[string]interface{}{{
 					"id":   item.CallID,
@@ -350,8 +350,8 @@ func openAIToResponses(oai *OpenAIResponse, reqID string) *ResponsesResponse {
 // buildResponsesCreatedEvent 构造 response.created 事件（output 为空）
 func buildResponsesCreatedEvent(model, respID string, createdAt int64) map[string]interface{} {
 	return map[string]interface{}{
-		"type":       "response.created",
-		"response":   baseResponsesResponse(model, respID, createdAt, "in_progress"),
+		"type":        "response.created",
+		"response":    baseResponsesResponse(model, respID, createdAt, "in_progress"),
 		"sequence_id": 0,
 	}
 }
@@ -470,7 +470,7 @@ func StreamOpenAIToResponses(w io.Writer, r io.Reader, model string) (*OpenAIUsa
 		writeEvent("response.content_part.done", map[string]interface{}{
 			"type": "response.content_part.done", "output_index": textItemIndex,
 			"content_index": 0,
-			"part": map[string]interface{}{"type": "output_text", "text": textBuf.String()},
+			"part":          map[string]interface{}{"type": "output_text", "text": textBuf.String()},
 		})
 		writeEvent("response.output_item.done", map[string]interface{}{
 			"type": "response.output_item.done", "output_index": textItemIndex, "item": finalOutput[textItemIndex],
@@ -547,7 +547,7 @@ func StreamOpenAIToResponses(w io.Writer, r io.Reader, model string) (*OpenAIUsa
 				item := funcItems[tc.Index]
 				item.Arguments += tc.Function.Arguments
 				writeEvent("response.function_call_arguments.delta", map[string]interface{}{
-					"type": "response.function_call_arguments.delta",
+					"type":         "response.function_call_arguments.delta",
 					"output_index": idx, "delta": tc.Function.Arguments,
 				})
 			}

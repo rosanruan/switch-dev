@@ -43,9 +43,9 @@ func (b *dataBlob) toBytes() []byte {
 const cryptProtectUIFORBIDDEN = 0x1
 
 var (
-	dllCrypt32     = windows.NewLazySystemDLL("Crypt32.dll")
-	procProtect    = dllCrypt32.NewProc("CryptProtectData")
-	procUnprotect  = dllCrypt32.NewProc("CryptUnprotectData")
+	dllCrypt32    = windows.NewLazySystemDLL("Crypt32.dll")
+	procProtect   = dllCrypt32.NewProc("CryptProtectData")
+	procUnprotect = dllCrypt32.NewProc("CryptUnprotectData")
 )
 
 func (winBackend) set(_, account, value string) error {

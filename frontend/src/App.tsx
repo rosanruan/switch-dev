@@ -88,6 +88,15 @@ export default function App() {
   useWailsEvent("update:available", (data) => {
     setUpdateInfo(data);
   });
+
+  // 挂载时主动检查更新一次：后端 startUpdateCheck 在 3s 后 emit 事件，
+  // 但前端可能还没渲染完（macOS WebView 初始化慢），事件被静默丢弃。
+  // 主动调用确保不依赖推送时机。
+  useEffect(() => {
+    UpdaterService.CheckUpdate().then((info) => {
+      if (info) setUpdateInfo(info);
+    }).catch(() => {});
+  }, []);
   useWailsEvent("update:progress", (data) => {
     const s = data as { state: string; percent: number; message: string };
     if (s.state === "restarting" || s.state === "done") {

@@ -80,13 +80,14 @@ export class AgentDetail {
 }
 
 /**
- * AllCredStatus 四上游 + 免费 API 凭据状态
+ * AllCredStatus 五上游 + 免费 API 凭据状态
  */
 export class AllCredStatus {
     "joycode": creds$0.CredStatusInfo | null;
     "deveco": creds$0.CredStatusInfo | null;
     "opencode": creds$0.CredStatusInfo | null;
     "workbuddy": creds$0.CredStatusInfo | null;
+    "mcloud": creds$0.CredStatusInfo | null;
 
     /**
      * 免费 API 供应商（动态）
@@ -107,6 +108,9 @@ export class AllCredStatus {
         if (!("workbuddy" in $$source)) {
             this["workbuddy"] = null;
         }
+        if (!("mcloud" in $$source)) {
+            this["mcloud"] = null;
+        }
 
         Object.assign(this, $$source);
     }
@@ -119,7 +123,8 @@ export class AllCredStatus {
         const $$createField1_0 = $$createType1;
         const $$createField2_0 = $$createType1;
         const $$createField3_0 = $$createType1;
-        const $$createField4_0 = $$createType2;
+        const $$createField4_0 = $$createType1;
+        const $$createField5_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("joycode" in $$parsedSource) {
             $$parsedSource["joycode"] = $$createField0_0($$parsedSource["joycode"]);
@@ -133,8 +138,11 @@ export class AllCredStatus {
         if ("workbuddy" in $$parsedSource) {
             $$parsedSource["workbuddy"] = $$createField3_0($$parsedSource["workbuddy"]);
         }
+        if ("mcloud" in $$parsedSource) {
+            $$parsedSource["mcloud"] = $$createField4_0($$parsedSource["mcloud"]);
+        }
         if ("providerAPIs" in $$parsedSource) {
-            $$parsedSource["providerAPIs"] = $$createField4_0($$parsedSource["providerAPIs"]);
+            $$parsedSource["providerAPIs"] = $$createField5_0($$parsedSource["providerAPIs"]);
         }
         return new AllCredStatus($$parsedSource as Partial<AllCredStatus>);
     }

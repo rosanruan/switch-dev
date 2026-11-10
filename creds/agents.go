@@ -18,14 +18,14 @@ const (
 // AgentInfo agent 工具元数据（可配置注册表的一条）
 // 加新 agent 工具只需往 AgentRegistry 追加一条，前端自动渲染对应引导卡片
 type AgentInfo struct {
-	Name        string   // 显示名，如 "JoyCode"
-	Upstream    string   // 上游标识，如 "joycode"，与 CredStatusInfo 对应
-	Type        string   // AgentTypeGUI | AgentTypeCLI
-	Desc        string   // 一句话描述
-	DownloadURL string   // 官网/下载页
-	InstallCmd  string   // CLI 安装命令（GUI 类型为空）
-	LoginCmd    string   // 登录命令（GUI 类型为"打开客户端扫码"之类提示）
-	LoginURL    string   // 浏览器登录页 URL
+	Name        string // 显示名，如 "JoyCode"
+	Upstream    string // 上游标识，如 "joycode"，与 CredStatusInfo 对应
+	Type        string // AgentTypeGUI | AgentTypeCLI
+	Desc        string // 一句话描述
+	DownloadURL string // 官网/下载页
+	InstallCmd  string // CLI 安装命令（GUI 类型为空）
+	LoginCmd    string // 登录命令（GUI 类型为"打开客户端扫码"之类提示）
+	LoginURL    string // 浏览器登录页 URL
 	// ExecNames CLI 可执行文件名（跨平台探测安装用）；对 CLI 工具，
 	// 除凭据文件外，还在 PATH 和 npm 全局 bin 目录查找这些可执行文件，
 	// 任一命中即视为已安装（Windows 上 .cmd/.exe/.ps1 shim 都算）
@@ -80,6 +80,16 @@ var AgentRegistry = []AgentInfo{
 		InstallCmd:  "", // GUI 应用，无 CLI 安装命令
 		LoginCmd:    "打开 WorkBuddy 客户端登录",
 		LoginURL:    "https://copilot.tencent.com/login?platform=workbuddy",
+	},
+	{
+		Name:        "中国移动云盘",
+		Upstream:    "mcloud",
+		Type:        AgentTypeGUI,
+		Desc:        "移动云盘 AI 工作台（灵犀），RCS token 明文存 accountdb.db，Basic 头本地拼装",
+		DownloadURL: "https://yun.139.com",
+		InstallCmd:  "", // GUI 应用，无 CLI 安装命令
+		LoginCmd:    "打开中国移动云盘 App 登录（RCS token 30 天滚动自动续期）",
+		LoginURL:    "https://yun.139.com",
 	},
 }
 
@@ -168,6 +178,8 @@ func probeCandidates(upstream string) []string {
 		return paths.DevEcoAuthCandidates()
 	case "opencode":
 		return paths.OpenCodeAuthCandidates()
+	case "mcloud":
+		return paths.MCAccountdbCandidates()
 	}
 	return nil
 }

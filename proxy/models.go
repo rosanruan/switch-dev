@@ -157,6 +157,48 @@ func stripWbPrefix(id string) string {
 	return id
 }
 
+// ====== 移动云盘（灵犀 / 139 邮箱 webai）模型白名单 ======
+// 内部 id 用 mc/ 前缀隔离，去掉前缀就是发上游的 modelType（如 mc/blian_qwen38_max
+// → blian_qwen38_max），与 wb/ 同模式；上游新模型经 FetchModels 自动出现
+
+type MCModel struct {
+	ID        string `json:"id"` // mc/ 前缀内部 id
+	Label     string `json:"label"`
+	Context   int    `json:"context"` // 上游 maxInputLength（字符）
+	Reasoning bool   `json:"reasoning"`
+	Free      bool   `json:"free,omitempty"`
+}
+
+var MCModels = []MCModel{
+	{ID: "mc/blian_qwen38_max", Label: "qwen3.8-Max (移动云盘)", Context: 800000, Reasoning: true, Free: true},
+	{ID: "mc/blian_qwen38_flash", Label: "qwen3.8-Flash (移动云盘)", Context: 800000, Reasoning: true, Free: true},
+	{ID: "mc/blian_qwen37_plus", Label: "qwen3.7-Plus (移动云盘)", Context: 800000, Reasoning: true, Free: true},
+	{ID: "mc/blian_qwen36_plus", Label: "qwen3.6-Plus (移动云盘)", Context: 800000, Reasoning: true, Free: true},
+	{ID: "mc/blian_qwen35_plus", Label: "qwen3.5-Plus (移动云盘)", Context: 800000, Reasoning: true, Free: true},
+	{ID: "mc/huoshan_glm_5_3", Label: "GLM-5.3 (移动云盘)", Context: 40000, Free: true},
+	{ID: "mc/blian_deepseek_v4_pro", Label: "DeepSeek-V4-Pro (移动云盘)", Context: 40000, Reasoning: true, Free: true},
+	{ID: "mc/blian_deepseek_v4_flash", Label: "DeepSeek-V4-Flash (移动云盘)", Context: 40000, Reasoning: true, Free: true},
+	{ID: "mc/jiutian", Label: "九天大模型 (移动云盘)", Context: 9000, Free: true},
+	{ID: "mc/vlm_huoshan_2_0_lite_thinking_vision", Label: "Seed-2.0-Lite (移动云盘)", Context: 40000, Reasoning: true, Free: true},
+}
+
+var MCModelByID map[string]*MCModel
+
+func init() {
+	MCModelByID = make(map[string]*MCModel)
+	for i := range MCModels {
+		MCModelByID[MCModels[i].ID] = &MCModels[i]
+	}
+}
+
+// stripMcPrefix 去掉 mc/ 前缀，还原成发往上游的 modelType
+func stripMcPrefix(id string) string {
+	if len(id) >= 3 && id[:3] == "mc/" {
+		return id[3:]
+	}
+	return id
+}
+
 // ====== 供应商模型（provider/ 前缀隔离，多供应商平级） ======
 
 // ProviderModelPrefix provider 模型内部 id 前缀（provider/<providerID>/<modelID>）
@@ -226,6 +268,7 @@ func stripProviderPrefix(internalID string) string {
 // 即把代理内部路由 id 还原为上游认的名字：
 //   - provider/<pid>/<mid> → <mid>
 //   - wb/<mid>         → <mid>
+//   - mc/<modelType>   → <modelType>
 //   - DevEco 本地 id    → 网关 upstream 名（DevEcoModelByID.Upstream）
 //   - 其他（joycode/opencode 等）→ 原样
 //
@@ -239,6 +282,9 @@ func ActualUpstreamModel(internalID string) string {
 	}
 	if len(internalID) >= 3 && internalID[:3] == "wb/" {
 		return stripWbPrefix(internalID)
+	}
+	if len(internalID) >= 3 && internalID[:3] == "mc/" {
+		return stripMcPrefix(internalID)
 	}
 	if m, ok := LookupModel(internalID); ok && m.WireName != "" {
 		return m.WireName

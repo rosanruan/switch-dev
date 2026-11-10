@@ -101,12 +101,12 @@ func (u *DevEcoUpstream) FetchModels(ctx context.Context) ([]FetchedModel, error
 		Body    struct {
 			InnerModels []struct {
 				ModelConfigs []struct {
-					ModelID          string   `json:"model_id"`
-					ContextWindow    int      `json:"context_window"`
-					Output           int      `json:"output"`
-					InputModalities  []string `json:"input_modalities"`
-					ThinkingMode     string   `json:"thinking_mode"`
-					ToolCallMode     string   `json:"tool_call_mode"`
+					ModelID         string   `json:"model_id"`
+					ContextWindow   int      `json:"context_window"`
+					Output          int      `json:"output"`
+					InputModalities []string `json:"input_modalities"`
+					ThinkingMode    string   `json:"thinking_mode"`
+					ToolCallMode    string   `json:"tool_call_mode"`
 				} `json:"model_configs"`
 			} `json:"inner_models"`
 		} `json:"body"`

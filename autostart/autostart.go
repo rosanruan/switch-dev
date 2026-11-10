@@ -40,4 +40,3 @@ func CurrentApp() *App {
 		Exec:        []string{exe, "--tray"},
 	}
 }
-

@@ -58,14 +58,15 @@ func MergeModels(upstreamName string, fetched []upstream.FetchedModel, fetchOK b
 		result = append(result, localModels(upstreamName)...)
 	}
 
-	// 追加本地 auto 虚拟模型（DevEco/JoyCode 保留 auto，OpenCode 不加）
-	if upstreamName != "opencode" {
+	// 追加本地 auto 虚拟模型（DevEco/JoyCode 保留 auto；OpenCode/mcloud 不加——
+	// 灵犀模型由服务端账号级偏好决定，无 auto 兜底语义）
+	if upstreamName != "opencode" && upstreamName != "mcloud" {
 		if !hasModelID(result, "auto") {
 			result = append([]ModelInfo{{
 				ID: "auto", Object: "model", Created: 1700000000,
-				OwnedBy:  "multi",
-				Label:    "Auto（" + autoLabel(upstreamName) + "）",
-				Stream:   true, Upstream: upstreamName, ToolCall: true,
+				OwnedBy: "multi",
+				Label:   "Auto（" + autoLabel(upstreamName) + "）",
+				Stream:  true, Upstream: upstreamName, ToolCall: true,
 			}}, result...)
 		}
 	}
@@ -134,6 +135,23 @@ func applyLocalMeta(mi *ModelInfo, upstreamName string) {
 			mi.Reasoning = lm.Reasoning
 			mi.Free = lm.Free
 		}
+	case "mcloud":
+		// 与 wb/ 同模式：动态拉取的模型加 mc/ 前缀（种子模型已有）。
+		// FetchModels 返回裸 modelType，Wire 已在 MergeModels 中设为 fm.ID，无需再改。
+		if !strings.HasPrefix(mi.ID, "mc/") {
+			mi.ID = "mc/" + mi.ID
+		}
+		if lm := MCModelByID[mi.ID]; lm != nil {
+			if mi.Label == "" || mi.Label == mi.ID {
+				mi.Label = lm.Label
+			}
+			if mi.Context == 0 {
+				mi.Context = lm.Context
+			}
+			mi.Reasoning = lm.Reasoning
+			mi.Free = lm.Free
+		}
+		mi.Stream = true
 	}
 }
 
@@ -177,6 +195,16 @@ func localModels(upstreamName string) []ModelInfo {
 				ID: m.ID, Label: m.Label, Upstream: "workbuddy", Wire: stripWbPrefix(m.ID),
 				Stream: true, Context: m.Context, Output: m.Output,
 				Vision: m.Vision, ToolCall: m.ToolCall, Reasoning: m.Reasoning, Free: m.Free,
+				Object: "model", Created: 1700000000,
+			})
+		}
+		return r
+	case "mcloud":
+		var r []ModelInfo
+		for _, m := range MCModels {
+			r = append(r, ModelInfo{
+				ID: m.ID, Label: m.Label, Upstream: "mcloud", Wire: stripMcPrefix(m.ID),
+				Stream: true, Context: m.Context, Reasoning: m.Reasoning, Free: m.Free,
 				Object: "model", Created: 1700000000,
 			})
 		}

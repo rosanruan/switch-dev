@@ -16,7 +16,7 @@ import (
 	"switchdev/upstream"
 )
 
-// Core 共享核心：持有代理服务、三上游、日志存储，并实现 proxy.EventLogger
+// Core 共享核心：持有代理服务、四上游、日志存储，并实现 proxy.EventLogger
 type Core struct {
 	mu        sync.RWMutex
 	server    *proxy.Server
@@ -24,6 +24,7 @@ type Core struct {
 	deveco    *upstream.DevEcoUpstream
 	opencode  *upstream.OpenCodeUpstream
 	workbuddy *upstream.WorkBuddyUpstream
+	mcloud    *upstream.MCloudUpstream
 	db        *db.DB
 	cfgMgr    *config.Manager // 配置管理器（上游开关等读写）
 
@@ -32,6 +33,7 @@ type Core struct {
 	devecoMgr    *creds.DevEcoCredManager
 	opencodeMgr  *creds.OpenCodeCredManager
 	workbuddyMgr *creds.WorkBuddyCredManager
+	mcloudMgr    *creds.MCloudCredManager
 
 	// 请求日志环形 buffer
 	logMu     sync.RWMutex
@@ -87,20 +89,24 @@ func (c *Core) Setup(
 	deMgr *creds.DevEcoCredManager,
 	ocMgr *creds.OpenCodeCredManager,
 	wbMgr *creds.WorkBuddyCredManager,
+	mcMgr *creds.MCloudCredManager,
 	jy *upstream.JoyCodeUpstream,
 	de *upstream.DevEcoUpstream,
 	oc *upstream.OpenCodeUpstream,
 	wb *upstream.WorkBuddyUpstream,
+	mc *upstream.MCloudUpstream,
 	server *proxy.Server,
 ) {
 	c.joycodeMgr = jyMgr
 	c.devecoMgr = deMgr
 	c.opencodeMgr = ocMgr
 	c.workbuddyMgr = wbMgr
+	c.mcloudMgr = mcMgr
 	c.joycode = jy
 	c.deveco = de
 	c.opencode = oc
 	c.workbuddy = wb
+	c.mcloud = mc
 	c.server = server
 	// 把 Core 注册为代理的事件日志器
 	server.Logger = c
@@ -109,11 +115,11 @@ func (c *Core) Setup(
 // Server 暴露代理服务
 func (c *Core) Server() *proxy.Server { return c.server }
 
-// Upstreams 暴露四上游适配器（供 ConfigService 拉取模型列表）。
+// Upstreams 暴露五上游适配器（供 ConfigService 拉取模型列表）。
 // Setup 未调用时字段是 nil 的具体类型指针，直接返回会得到「非 nil 接口包着 nil 指针」，
 // 调用方的 u == nil 判空拦不住，方法里解引用就 panic。这里显式转成 nil 接口。
-func (c *Core) Upstreams() (upstream.Upstream, upstream.Upstream, upstream.Upstream, upstream.Upstream) {
-	var jy, de, oc, wb upstream.Upstream
+func (c *Core) Upstreams() (upstream.Upstream, upstream.Upstream, upstream.Upstream, upstream.Upstream, upstream.Upstream) {
+	var jy, de, oc, wb, mc upstream.Upstream
 	if c.joycode != nil {
 		jy = c.joycode
 	}
@@ -126,7 +132,10 @@ func (c *Core) Upstreams() (upstream.Upstream, upstream.Upstream, upstream.Upstr
 	if c.workbuddy != nil {
 		wb = c.workbuddy
 	}
-	return jy, de, oc, wb
+	if c.mcloud != nil {
+		mc = c.mcloud
+	}
+	return jy, de, oc, wb, mc
 }
 
 // ====== proxy.EventLogger 实现 ======
@@ -225,12 +234,13 @@ func (c *Core) GetLogStats() *LogStats {
 
 // ====== 凭据状态汇总 ======
 
-// AllCredStatus 四上游 + 免费 API 凭据状态
+// AllCredStatus 五上游 + 免费 API 凭据状态
 type AllCredStatus struct {
 	JoyCode      *creds.CredStatusInfo            `json:"joycode"`
 	DevEco       *creds.CredStatusInfo            `json:"deveco"`
 	OpenCode     *creds.CredStatusInfo            `json:"opencode"`
 	WorkBuddy    *creds.CredStatusInfo            `json:"workbuddy"`
+	MCloud       *creds.CredStatusInfo            `json:"mcloud"`
 	ProviderAPIs map[string]*creds.CredStatusInfo `json:"providerAPIs,omitempty"` // 免费 API 供应商（动态）
 }
 
@@ -253,11 +263,13 @@ func (c *Core) GetCredStatus() *AllCredStatus {
 		DevEco:    c.deveco.CredStatus(),
 		OpenCode:  c.opencode.CredStatus(),
 		WorkBuddy: c.workbuddy.CredStatus(),
+		MCloud:    c.mcloud.CredStatus(),
 	}
 	status.JoyCode.Enabled = enabled("joycode")
 	status.DevEco.Enabled = enabled("deveco")
 	status.OpenCode.Enabled = enabled("opencode")
 	status.WorkBuddy.Enabled = enabled("workbuddy")
+	status.MCloud.Enabled = enabled("mcloud")
 	if server != nil {
 		providerAPIs := server.GetProviderAPIs()
 		if len(providerAPIs) > 0 {
@@ -299,6 +311,9 @@ func (c *Core) RefreshCreds(name string) error {
 	case "workbuddy":
 		c.workbuddy.InvalidateCreds()
 		_, err = c.workbuddyMgr.EnsureCreds()
+	case "mcloud":
+		c.mcloud.InvalidateCreds()
+		_, err = c.mcloudMgr.EnsureCreds()
 	default:
 		return nil
 	}
@@ -313,6 +328,7 @@ func (c *Core) RefreshAllCreds() {
 	c.RefreshCreds("deveco")
 	c.RefreshCreds("opencode")
 	c.RefreshCreds("workbuddy")
+	c.RefreshCreds("mcloud")
 }
 
 // WatchInstalledAgents 后台周期探测各 agent 安装状态。

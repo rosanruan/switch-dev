@@ -3,8 +3,8 @@ package upstream
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,7 +24,7 @@ type JoyCodeUpstream struct {
 
 func NewJoyCodeUpstream(mgr *creds.JoyCodeCredManager) *JoyCodeUpstream {
 	return &JoyCodeUpstream{
-		mgr:    mgr,
+		mgr: mgr,
 		client: &http.Client{
 			Timeout: 120 * time.Second, // 非流式：模型推理可能慢
 		},
@@ -114,13 +114,13 @@ func (u *JoyCodeUpstream) FetchModels(ctx context.Context) ([]FetchedModel, erro
 			continue
 		}
 		fm := FetchedModel{
-			ID:       m.ChatApiModel,
-			Label:    m.Label,
-			Output:   m.RespMaxTokens,
-			Context:  m.MaxTotalTokens,
-			Stream:   m.SupportStream,
-			ToolCall: hasFeature(m.Features, "function_call"),
-			Vision:   hasFeature(m.Features, "vision"),
+			ID:        m.ChatApiModel,
+			Label:     m.Label,
+			Output:    m.RespMaxTokens,
+			Context:   m.MaxTotalTokens,
+			Stream:    m.SupportStream,
+			ToolCall:  hasFeature(m.Features, "function_call"),
+			Vision:    hasFeature(m.Features, "vision"),
 			Reasoning: hasFeature(m.Features, "agent"),
 		}
 		if fm.Label == "" {

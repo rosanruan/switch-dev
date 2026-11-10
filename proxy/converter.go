@@ -159,6 +159,38 @@ func AnthropicToOpenAIWorkbuddy(body *AnthropicRequest) *OpenAIRequest {
 	return openai
 }
 
+// AnthropicToOpenAIMCloud 移动云盘（灵犀）：model 去掉 mc/ 前缀还原为上游 modelType，
+// 否则 config/set 会收到 mc/blian_qwen38_max 被上游判为非法参数（01000001）。
+// 灵犀无函数调用，tools 不透传（折叠阶段把 tool_calls 按文本转写）。
+func AnthropicToOpenAIMCloud(body *AnthropicRequest) *OpenAIRequest {
+	resolvedModel := ResolveModel(body.Model)
+
+	messages, _ := anthropicMessagesToOpenAI(body)
+
+	maxTokens := 4096
+	if body.MaxTokens > 0 {
+		maxTokens = body.MaxTokens
+	}
+
+	openai := &OpenAIRequest{
+		Model:     stripMcPrefix(resolvedModel),
+		Messages:  messages,
+		Stream:    false,
+		MaxTokens: maxTokens,
+	}
+
+	if body.Temperature != nil {
+		openai.Temperature = body.Temperature
+	}
+	if body.TopP != nil {
+		openai.TopP = body.TopP
+	}
+	if len(body.StopSequences) > 0 {
+		openai.Stop = body.StopSequences
+	}
+	return openai
+}
+
 // anthropicMessagesToOpenAI 共用：Anthropic body 的 messages/system/tools 转成 OpenAI 的 messages + tools
 func anthropicMessagesToOpenAI(body *AnthropicRequest) ([]OpenAIMessage, []OpenAITool) {
 	var messages []OpenAIMessage

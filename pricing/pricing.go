@@ -71,6 +71,22 @@ func (m *Manager) Load() (imported bool, err error) {
 			for _, p := range f.Prices {
 				m.prices[p.ModelID] = p
 			}
+			// 升级合并：内置库后续新增的模型（如 mcloud 渠道、GLM-5.3）补进已有自有库，
+			// 否则老用户的 pricing.json 一旦生成，新模型的费率永远进不来（不计费）。
+			// 只补缺、不覆盖 —— 用户自定义过费率的条目保持原样。
+			added := 0
+			for i := range DefaultRates {
+				p := DefaultRates[i]
+				if _, ok := m.prices[p.ModelID]; !ok {
+					m.prices[p.ModelID] = &p
+					added++
+				}
+			}
+			if added > 0 {
+				if saveErr := m.saveLocked(); saveErr != nil {
+					return false, fmt.Errorf("合并内置新增费率后保存自有库失败: %w", saveErr)
+				}
+			}
 			return false, nil
 		}
 		// 文件存在但损坏/空 -> 用硬编码重建

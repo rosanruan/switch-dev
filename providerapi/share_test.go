@@ -33,7 +33,7 @@ func TestShareBinaryRoundTrip(t *testing.T) {
 		t.Fatalf("bad header: version=%d flags=%d", data[2], data[3])
 	}
 	// 不能是可读 JSON
-		if bytes.Contains(data, []byte("gsk_secret")) {
+	if bytes.Contains(data, []byte("gsk_secret")) {
 		t.Fatal("ciphertext leaks plaintext API key")
 	}
 	if bytes.Contains(data, []byte(`"providers"`)) {

@@ -58,6 +58,8 @@ func (s *CredsService) GetAgents() []*AgentDetail {
 			detail.Valid = credStatus.OpenCode != nil && credStatus.OpenCode.Valid
 		case "workbuddy":
 			detail.Valid = credStatus.WorkBuddy != nil && credStatus.WorkBuddy.Valid
+		case "mcloud":
+			detail.Valid = credStatus.MCloud != nil && credStatus.MCloud.Valid
 		}
 		result = append(result, detail)
 	}

@@ -7,8 +7,9 @@ import (
 )
 
 // AppConfigDir switch-dev 自身的配置/数据目录（配置、日志、费率等）
-//   darwin/linux: ~/.config/switch-dev
-//   windows: %APPDATA%\switch-dev
+//
+//	darwin/linux: ~/.config/switch-dev
+//	windows: %APPDATA%\switch-dev
 func AppConfigDir() string {
 	if runtime.GOOS == "windows" {
 		if dir := os.Getenv("APPDATA"); dir != "" {
@@ -20,9 +21,10 @@ func AppConfigDir() string {
 }
 
 // AppSupportDir GUI/VSCode 系工具（JoyCode、WorkBuddy）的数据根目录
-//   darwin: ~/Library/Application Support
-//   linux:  ~/.config
-//   windows: %APPDATA%
+//
+//	darwin: ~/Library/Application Support
+//	linux:  ~/.config
+//	windows: %APPDATA%
 func AppSupportDir() string {
 	if runtime.GOOS == "windows" {
 		return os.Getenv("APPDATA")
@@ -35,8 +37,9 @@ func AppSupportDir() string {
 }
 
 // XDGConfigDir CLI 工具配置目录（XDG_CONFIG_HOME）
-//   darwin/linux: ~/.config
-//   windows: %APPDATA%（Windows 无 XDG 约定，回退）
+//
+//	darwin/linux: ~/.config
+//	windows: %APPDATA%（Windows 无 XDG 约定，回退）
 func XDGConfigDir() string {
 	if runtime.GOOS == "windows" {
 		return os.Getenv("APPDATA")
@@ -46,8 +49,9 @@ func XDGConfigDir() string {
 }
 
 // XDGDataDir CLI 工具数据目录（XDG_DATA_HOME）
-//   darwin/linux: ~/.local/share
-//   windows: %APPDATA%
+//
+//	darwin/linux: ~/.local/share
+//	windows: %APPDATA%
 func XDGDataDir() string {
 	if runtime.GOOS == "windows" {
 		return os.Getenv("APPDATA")
@@ -57,8 +61,9 @@ func XDGDataDir() string {
 }
 
 // XDGStateDir CLI 工具状态目录（XDG_STATE_HOME）
-//   darwin/linux: ~/.local/state
-//   windows: %LOCALAPPDATA%
+//
+//	darwin/linux: ~/.local/state
+//	windows: %LOCALAPPDATA%
 func XDGStateDir() string {
 	if runtime.GOOS == "windows" {
 		return os.Getenv("LOCALAPPDATA")
@@ -118,9 +123,10 @@ func FirstExists(candidates []string) string {
 }
 
 // Resolve 路径解析（启动时自动探测）：
-//   envKey 非空 -> 强制用环境变量值（不探测，用户明确指定）
-//   否则遍历 candidates，返回第一个已存在的
-//   都不存在 -> 返回第一个候选作默认（加载时会报"找不到"）
+//
+//	envKey 非空 -> 强制用环境变量值（不探测，用户明确指定）
+//	否则遍历 candidates，返回第一个已存在的
+//	都不存在 -> 返回第一个候选作默认（加载时会报"找不到"）
 func Resolve(envKey string, candidates []string) string {
 	if e := os.Getenv(envKey); e != "" {
 		return e
@@ -152,7 +158,7 @@ func JoyCodeExtPkgCandidates() []string {
 	home, _ := os.UserHomeDir()
 	rel := filepath.Join("Resources", "app", "extensions", "joycoder-editor", "package.json")
 	c := []string{
-		filepath.Join("/Applications", "JoyCode.app", "Contents", rel), // macOS 全局安装
+		filepath.Join("/Applications", "JoyCode.app", "Contents", rel),      // macOS 全局安装
 		filepath.Join(home, "Applications", "JoyCode.app", "Contents", rel), // macOS 用户级安装
 	}
 	if local := os.Getenv("LOCALAPPDATA"); local != "" {
@@ -219,6 +225,20 @@ func DevEcoAuthCandidates() []string {
 	return c
 }
 
+// MCAccountdbCandidates 中国移动云盘 accountdb.db 跨平台候选路径
+// （RCS token 明文存 t_account 表，30 天滚动由 App 登录自动续）
+func MCAccountdbCandidates() []string {
+	home, _ := os.UserHomeDir()
+	c := []string{
+		filepath.Join(home, "Library", "Application Support", "mCloud", "accountdb.db"), // macOS
+	}
+	// Windows：Electron 应用数据目录（未实测，Windows 版 App 存在 —— clientType 11）
+	for _, base := range windowsConfigDirs() {
+		c = append(c, filepath.Join(base, "mCloud", "accountdb.db"))
+	}
+	return c
+}
+
 // windowsConfigDirs 返回 Windows 上应用数据目录候选（APPDATA + LOCALAPPDATA）；
 // 非 Windows 平台返回 nil（调用方据此跳过）
 func windowsConfigDirs() []string {
@@ -246,8 +266,10 @@ func ProviderCatalogCachePath() string {
 }
 
 // NpmGlobalBinDir 返回 npm 全局 bin 目录：
-//   Windows: %APPDATA%\npm（npm i -g 安装的 .cmd/.exe shim 都在这里）
-//   其他平台: ~/.npm-global/bin 及常见前缀（实际更可靠的是 exec.LookPath 查 PATH）
+//
+//	Windows: %APPDATA%\npm（npm i -g 安装的 .cmd/.exe shim 都在这里）
+//	其他平台: ~/.npm-global/bin 及常见前缀（实际更可靠的是 exec.LookPath 查 PATH）
+//
 // 主要用于 Windows 下探测通过 npm 全局安装的 CLI（opencode/deveco），
 // 即使该目录未进 PATH 也能定位到 shim。
 func NpmGlobalBinDir() string {

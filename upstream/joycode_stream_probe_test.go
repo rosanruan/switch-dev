@@ -19,9 +19,9 @@ import (
 // 运行：go test -run TestJoyCodeStreamProbe -v ./upstream/
 //
 // 会打印每个模型的 HTTP status、Content-Type、响应前 2KB，用于确认：
-//   1. SSE 格式是标准 OpenAI（data:{...}\n\n）还是 Color 信封包装（{code,data}）
-//   2. 哪些模型被灰度拒绝返回 406
-//   3. 流式路由是 Accept:text/event-stream 触发还是 body stream:true 触发
+//  1. SSE 格式是标准 OpenAI（data:{...}\n\n）还是 Color 信封包装（{code,data}）
+//  2. 哪些模型被灰度拒绝返回 406
+//  3. 流式路由是 Accept:text/event-stream 触发还是 body stream:true 触发
 func TestJoyCodeStreamProbe(t *testing.T) {
 	mgr := creds.NewJoyCodeCredManager(creds.DefaultJoyCodeConfig())
 	cred, err := mgr.EnsureCreds()
@@ -32,9 +32,9 @@ func TestJoyCodeStreamProbe(t *testing.T) {
 
 	// 覆盖测试模型：含 Stream:true 和 Stream:false 的
 	models := []string{
-		"JoyAI-Code-1.5",      // Stream:true
-		"GLM-5.1-agent",       // Stream:true
-		"MiniMax-M2.7-agent",  // Stream:false（预期 406 或非流式）
+		"JoyAI-Code-1.5",     // Stream:true
+		"GLM-5.1-agent",      // Stream:true
+		"MiniMax-M2.7-agent", // Stream:false（预期 406 或非流式）
 	}
 
 	for _, model := range models {

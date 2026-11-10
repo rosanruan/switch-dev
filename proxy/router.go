@@ -344,6 +344,8 @@ func (s *Server) pickUpstream(name string) upstream.Upstream {
 		return s.OpenCode
 	case "workbuddy":
 		return s.WorkBuddy
+	case "mcloud":
+		return s.MCloud
 	}
 	// provider API 供应商（多供应商平级）
 	if free := s.GetProviderAPI(name); free != nil {
@@ -439,6 +441,8 @@ func (s *Server) buildAnthropicOpenAIBody(body *AnthropicRequest, ref ModelRef, 
 		oaiBody = AnthropicToOpenAIOpencode(&cp)
 	case "workbuddy":
 		oaiBody = AnthropicToOpenAIWorkbuddy(&cp)
+	case "mcloud":
+		oaiBody = AnthropicToOpenAIMCloud(&cp)
 	default:
 		// 免费 API 供应商：走通用 OpenAI 转换
 		oaiBody, _ = AnthropicToOpenAI(&cp)

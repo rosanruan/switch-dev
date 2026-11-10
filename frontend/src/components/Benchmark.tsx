@@ -9,6 +9,7 @@ import TrashIcon from "./TrashIcon";
 
 const DEFAULT_PROMPT = "请详细介绍 Go 语言的 goroutine 和 channel 并发模型，包括基本概念、使用示例和注意事项。";
 const STORAGE_KEY = "benchmark.items.v2";
+const RESULTS_KEY = "benchmark.results.v1";
 const APIMODE_KEY = "benchmark.apimode";
 
 type ApiMode = "anthropic" | "openai-chat" | "openai-responses";
@@ -23,12 +24,14 @@ const UPSTREAM_LABEL: Record<string, string> = {
   joycode: "JoyCode",
   deveco: "DevEco",
   workbuddy: "WorkBuddy",
+  mcloud: "移动云盘",
 };
 
 const UPSTREAM_COLOR: Record<string, string> = {
   joycode: "bg-[var(--color-success)]/20 text-[var(--color-success)]",
   deveco: "bg-[var(--color-danger)]/20 text-[var(--color-danger)]",
   workbuddy: "bg-pink-500/20 text-pink-400",
+  mcloud: "bg-sky-500/20 text-sky-400",
 };
 
 interface BenchItem {
@@ -62,7 +65,18 @@ export default function Benchmark({ creds }: { creds: AllCredStatus | null }) {
   const [apiMode, setApiMode] = useState<ApiMode>("anthropic");
   const [models, setModels] = useState<ModelDetail[]>([]);
   const [items, setItems] = useState<BenchItem[]>([]);
-  const [results, setResults] = useState<Record<string, BenchmarkResult | null>>({});
+  // 结果先同步从 localStorage 恢复（切 tab 回来立即有值，不等 DB），
+  // 随后 GetBenchResults 再合并 DB 里的历史结果（本机最新值优先）。
+  const [results, setResults] = useState<Record<string, BenchmarkResult | null>>(() => {
+    try {
+      const saved = localStorage.getItem(RESULTS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") return parsed;
+      }
+    } catch { /* 损坏则忽略，重新测评 */ }
+    return {};
+  });
   const [running, setRunning] = useState(false);
   const [singleRunning, setSingleRunning] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -127,8 +141,33 @@ export default function Benchmark({ creds }: { creds: AllCredStatus | null }) {
         }
         setResults((prev) => ({ ...map, ...prev }));
       })
-      .catch(() => {});
+      .catch((e) => {
+        // 历史结果恢复失败不阻断页面；localStorage 里还有本机最近一次的缓存
+        console.warn("恢复历史测评结果失败", e);
+      });
   }, []);
+
+  // 结果变化即持久化（只存指标、不含 content 大字段），切 tab/重开应用都能恢复
+  useEffect(() => {
+    const slim: Record<string, Omit<BenchmarkResult, "content">> = {};
+    for (const [k, r] of Object.entries(results)) {
+      if (!r) continue; // 测评中（null）保留上一次已存的结果
+      slim[k] = {
+        upstream: r.upstream,
+        upstreamLabel: r.upstreamLabel,
+        model: r.model,
+        success: r.success,
+        durationMs: r.durationMs,
+        outputTokens: r.outputTokens,
+        tps: r.tps,
+        errorMsg: r.errorMsg,
+        startedAt: r.startedAt,
+      };
+    }
+    try {
+      localStorage.setItem(RESULTS_KEY, JSON.stringify(slim));
+    } catch { /* 存储超配额不影响测评 */ }
+  }, [results]);
 
   useEffect(() => {
     localStorage.setItem(APIMODE_KEY, apiMode);

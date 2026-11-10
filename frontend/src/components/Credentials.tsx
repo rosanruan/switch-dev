@@ -14,12 +14,13 @@ const AGENT_ICON: Record<string, { initial: string; color: string }> = {
   deveco: { initial: "D", color: "bg-amber-500/20 text-amber-400" },
   opencode: { initial: "O", color: "bg-purple-500/20 text-purple-400" },
   workbuddy: { initial: "W", color: "bg-pink-500/20 text-pink-400" },
+  mcloud: { initial: "移", color: "bg-sky-500/20 text-sky-400" },
 };
 
 export default function Credentials({ creds }: Props) {
   // OpenCode 本质是 API Key 配置，不在凭据页作为本地 upstream 展示，
   // 用户可在「供应商配置」里添加。
-  const builtins = ["joycode", "deveco", "workbuddy"];
+  const builtins = ["joycode", "deveco", "workbuddy", "mcloud"];
   // 只显示已安装/已配置的内置上游；未安装的静默隐藏
   const visibleBuiltins = builtins.filter((u) => {
     const st = creds?.[u as keyof AllCredStatus] ?? null;
@@ -336,6 +337,8 @@ function nameFromUpstream(upstream: string): string {
       return "OpenCode Zen";
     case "workbuddy":
       return "WorkBuddy";
+    case "mcloud":
+      return "移动云盘（灵犀）";
     default:
       return upstream;
   }

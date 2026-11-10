@@ -560,7 +560,7 @@ func SetAdditionalUpstreamValidator(fn func(string) bool) {
 // 因此这里采用与 isValidModel 一致的宽松策略，避免保存降级链/方案时误拒自定义供应商。
 func isValidUpstream(u string) bool {
 	switch u {
-	case "joycode", "deveco", "opencode", "workbuddy":
+	case "joycode", "deveco", "opencode", "workbuddy", "mcloud":
 		return true
 	}
 	if additionalUpstreamValidator != nil {

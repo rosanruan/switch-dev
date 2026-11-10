@@ -20,7 +20,7 @@ import (
 // 注入 proxy —— 与 proxy.SetProviderModels 同一个方向。
 
 // catalogUpstreams 参与目录同步的内置上游（顺序与 Core.Upstreams() 返回一致）
-var catalogUpstreams = []string{"joycode", "deveco", "opencode", "workbuddy"}
+var catalogUpstreams = []string{"joycode", "deveco", "opencode", "workbuddy", "mcloud"}
 
 // upstreamFetch 单个上游的拉取结果
 type upstreamFetch struct {
@@ -29,10 +29,10 @@ type upstreamFetch struct {
 	ok       bool
 }
 
-// fetchUpstreamModels 并发拉取四上游模型（共享骨架，GetAvailableModels 与 RefreshCatalog 共用）
+// fetchUpstreamModels 并发拉取五上游模型（共享骨架，GetAvailableModels 与 RefreshCatalog 共用）
 func (s *ConfigService) fetchUpstreamModels(ctx context.Context) []upstreamFetch {
-	jy, de, oc, wb := s.core.Upstreams()
-	ups := []upstream.Upstream{jy, de, oc, wb}
+	jy, de, oc, wb, mc := s.core.Upstreams()
+	ups := []upstream.Upstream{jy, de, oc, wb, mc}
 
 	results := make([]upstreamFetch, len(catalogUpstreams))
 	var wg sync.WaitGroup

@@ -588,6 +588,10 @@ function agentLabel(upstream: string): string {
       return "京东 JoyCode";
     case "deveco":
       return "华为 DevEco";
+    case "workbuddy":
+      return "腾讯 WorkBuddy";
+    case "mcloud":
+      return "移动云盘（灵犀）";
     default:
       return upstream || "-";
   }

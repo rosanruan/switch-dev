@@ -83,12 +83,14 @@ func main() {
 	deMgr := creds.NewDevEcoCredManager(creds.DefaultDevEcoConfig())
 	ocMgr := creds.NewOpenCodeCredManager(creds.DefaultOpenCodeConfig())
 	wbMgr := creds.NewWorkBuddyCredManager(creds.DefaultWorkBuddyConfig())
+	mcMgr := creds.NewMCloudCredManager(creds.DefaultMCloudConfig())
 
 	// 2. 上游适配器
 	jyUp := upstream.NewJoyCodeUpstream(jyMgr)
 	deUp := upstream.NewDevEcoUpstream(deMgr)
 	ocUp := upstream.NewOpenCodeUpstream(ocMgr)
 	wbUp := upstream.NewWorkBuddyUpstream(wbMgr)
+	mcUp := upstream.NewMCloudUpstream(mcMgr)
 
 	// 3. 配置管理器
 	cfgMgr, err := config.NewManager("")
@@ -109,7 +111,7 @@ func main() {
 	if serverPort == 0 {
 		serverPort = config.DefaultPort
 	}
-	server := proxy.NewServer(jyUp, deUp, ocUp, wbUp, "127.0.0.1", serverPort)
+	server := proxy.NewServer(jyUp, deUp, ocUp, wbUp, mcUp, "127.0.0.1", serverPort)
 	server.ConfigResolver = cfgMgr // 注入配置解析器
 
 	// 4.5 费率管理器（本地无费率文件时从内置硬编码还原）
@@ -123,7 +125,7 @@ func main() {
 
 	// 5. Core（共享状态）
 	core := service.NewCore()
-	core.Setup(jyMgr, deMgr, ocMgr, wbMgr, jyUp, deUp, ocUp, wbUp, server)
+	core.Setup(jyMgr, deMgr, ocMgr, wbMgr, mcMgr, jyUp, deUp, ocUp, wbUp, mcUp, server)
 	core.SetConfigManager(cfgMgr)
 
 	// 5.3 本地数据库（SQLite）
@@ -273,10 +275,10 @@ func main() {
 	setupSystray(app, server, cfgMgr, cfgSvc, logMgr)
 
 	// 9. 启动代理 + 凭据校验（非致命：失败仅警告，等待客户端登录后自动恢复）
-	go startProxyAndCreds(server, jyUp, deUp, ocUp, wbUp, core)
+	go startProxyAndCreds(server, jyUp, deUp, ocUp, wbUp, mcUp, core)
 
 	// 10. 后台定期预检凭据
-	go startBackgroundVerify(jyUp, deUp, ocUp, wbUp, core)
+	go startBackgroundVerify(jyUp, deUp, ocUp, wbUp, mcUp, core)
 
 	// 10.5 后台周期探测 agent 安装状态（新安装工具时自动校验凭据并推送，无需重启）
 	go core.WatchInstalledAgents(app.Context(), 5*time.Second)
@@ -293,9 +295,15 @@ func main() {
 		return server.GetProviderAPI(id) != nil
 	})
 
-	// 窗口聚焦时检查更新（长时间未操作后激活）
+	// 窗口聚焦 / 显示时检查更新。
+	// 同时监听 WindowFocus 和 WindowShow：
+	// - macOS 关闭窗口只是隐藏（Hide），再次打开时走 WindowShow
+	// - Windows/Linux 窗口聚焦走 WindowFocus
+	// checkUpdateOnActivation 内部有 5 分钟防抖，短时间重复触发不会多次请求。
 	mainWindow.OnWindowEvent(events.Common.WindowFocus, func(event *application.WindowEvent) {
-		// 在独立 goroutine 中调用，避免阻塞事件循环
+		go checkUpdateOnActivation(updaterSvc)
+	})
+	mainWindow.OnWindowEvent(events.Common.WindowShow, func(event *application.WindowEvent) {
 		go checkUpdateOnActivation(updaterSvc)
 	})
 	go startUpdateCheck(updaterSvc)
@@ -666,8 +674,8 @@ func registerProviderAPIRefresh(server *proxy.Server, mgr *providerapi.Manager, 
 }
 
 // startProxyAndCreds 启动时校验凭据（非致命）+ 启动代理
-func startProxyAndCreds(server *proxy.Server, jy *upstream.JoyCodeUpstream, de *upstream.DevEcoUpstream, oc *upstream.OpenCodeUpstream, wb *upstream.WorkBuddyUpstream, core *service.Core) {
-	// 启动时校验四上游凭据（失败仅警告）
+func startProxyAndCreds(server *proxy.Server, jy *upstream.JoyCodeUpstream, de *upstream.DevEcoUpstream, oc *upstream.OpenCodeUpstream, wb *upstream.WorkBuddyUpstream, mc *upstream.MCloudUpstream, core *service.Core) {
+	// 启动时校验五上游凭据（失败仅警告）
 	if err := jy.EnsureCreds(nil); err != nil {
 		log.Printf("⚠️ JoyCode 凭据不可用: %v（JoyCode 作为 auto 降级兜底，缺失不影响 DevEco 直连）", err)
 	}
@@ -680,6 +688,9 @@ func startProxyAndCreds(server *proxy.Server, jy *upstream.JoyCodeUpstream, de *
 	if err := wb.EnsureCreds(nil); err != nil {
 		log.Printf("⚠️ WorkBuddy 凭据不可用: %v（仅显式选 wb/* 模型时使用）", err)
 	}
+	if err := mc.EnsureCreds(nil); err != nil {
+		log.Printf("⚠️ 移动云盘凭据不可用: %v（仅显式选 mc/* 模型时使用）", err)
+	}
 	core.EmitEvent("cred:change", core.GetCredStatus())
 
 	// 启动代理
@@ -691,7 +702,7 @@ func startProxyAndCreds(server *proxy.Server, jy *upstream.JoyCodeUpstream, de *
 }
 
 // startBackgroundVerify 后台定期预检凭据
-func startBackgroundVerify(jy *upstream.JoyCodeUpstream, de *upstream.DevEcoUpstream, oc *upstream.OpenCodeUpstream, wb *upstream.WorkBuddyUpstream, core *service.Core) {
+func startBackgroundVerify(jy *upstream.JoyCodeUpstream, de *upstream.DevEcoUpstream, oc *upstream.OpenCodeUpstream, wb *upstream.WorkBuddyUpstream, mc *upstream.MCloudUpstream, core *service.Core) {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 
@@ -713,5 +724,6 @@ func startBackgroundVerify(jy *upstream.JoyCodeUpstream, de *upstream.DevEcoUpst
 		go verify(de)
 		go verify(oc)
 		go verify(wb)
+		go verify(mc)
 	}
 }

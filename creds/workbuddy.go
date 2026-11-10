@@ -221,9 +221,9 @@ func UserInfoHeader(uid string) string {
 // 用于 /plugin/auth/* 鉴权链路，使指纹与官方客户端一致，避免风控误伤。
 func WorkBuddyAuthHeaders(cred *WorkBuddyCred) map[string]string {
 	h := map[string]string{
-		"Authorization":   fmt.Sprintf("Bearer %s", cred.AccessToken),
-		"Content-Type":    "application/json",
-		"Accept":          "application/json",
+		"Authorization":    fmt.Sprintf("Bearer %s", cred.AccessToken),
+		"Content-Type":     "application/json",
+		"Accept":           "application/json",
 		"X-Requested-With": "XMLHttpRequest",
 	}
 	if cred.UID != "" {

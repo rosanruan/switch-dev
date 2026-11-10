@@ -17,13 +17,14 @@ const UPSTREAM_LABEL: Record<string, string> = {
   joycode: "JoyCode",
   deveco: "DevEco",
   workbuddy: "WorkBuddy",
+  mcloud: "移动云盘",
 };
 
-// 运行模式 tab 中，第三方供应商（非内置四上游）的模型不展示「免费」徽章——
+// 运行模式 tab 中，第三方供应商（非内置五上游）的模型不展示「免费」徽章——
 // 它们是用户自带 Key 接入的，后端虽然统一标了 free:true，但对用户没有「免费」语义，
-// 反而与内置免费档混淆。内置上游（joycode/deveco/opencode/workbuddy）保留该标识。
+// 反而与内置免费档混淆。内置上游（joycode/deveco/opencode/workbuddy/mcloud）保留该标识。
 function stripFreeForProviders(list: UpstreamModels[]): UpstreamModels[] {
-  const BUILTIN = new Set(["joycode", "deveco", "opencode", "workbuddy"]);
+  const BUILTIN = new Set(["joycode", "deveco", "opencode", "workbuddy", "mcloud"]);
   return list.map((u) =>
     BUILTIN.has(u.upstream)
       ? u
@@ -333,6 +334,7 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
     joycode: creds?.joycode?.valid ?? false,
     deveco: creds?.deveco?.valid ?? false,
     workbuddy: creds?.workbuddy?.valid ?? false,
+    mcloud: creds?.mcloud?.valid ?? false,
     ...Object.fromEntries(
       Object.entries(creds?.providerAPIs ?? {}).map(([id, st]) => [id, st?.valid ?? false])
     ),

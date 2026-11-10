@@ -120,14 +120,14 @@ func TestDynamicEntryCannotHijackOtherUpstream(t *testing.T) {
 	}
 }
 
-// TestCatalogSnapshotCoversAllSeeds 快照条目数 = 四个种子白名单之和
+// TestCatalogSnapshotCoversAllSeeds 快照条目数 = 五个种子白名单之和
 func TestCatalogSnapshotCoversAllSeeds(t *testing.T) {
 	SetCatalog(BuildCatalog(nil))
-	want := len(JoyCodeModels) + len(DevEcoModels) + len(OpenCodeModels) + len(WorkBuddyModels)
+	want := len(JoyCodeModels) + len(DevEcoModels) + len(OpenCodeModels) + len(WorkBuddyModels) + len(MCModels)
 	if got := len(CatalogSnapshot()); got != want {
 		t.Errorf("CatalogSnapshot() 有 %d 条，want %d", got, want)
 	}
-	for _, up := range []string{"joycode", "deveco", "opencode", "workbuddy"} {
+	for _, up := range []string{"joycode", "deveco", "opencode", "workbuddy", "mcloud"} {
 		if len(CatalogModelsByUpstream(up)) == 0 {
 			t.Errorf("上游 %s 在目录中为空", up)
 		}

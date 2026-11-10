@@ -1,6 +1,6 @@
 package db
 
-// syncBuiltins 插入内置 4 上游（幂等）
+// syncBuiltins 插入内置上游（幂等）
 func (d *DB) syncBuiltins() error {
 	builtins := []struct {
 		name  string
@@ -10,6 +10,7 @@ func (d *DB) syncBuiltins() error {
 		{"deveco", "deveco"},
 		{"opencode", "opencode"},
 		{"workbuddy", "workbuddy"},
+		{"mcloud", "mcloud"},
 	}
 	for _, b := range builtins {
 		_, err := d.conn.Exec(

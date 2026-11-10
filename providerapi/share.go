@@ -33,8 +33,8 @@ import (
 //	..   N    ciphertext（AES-GCM 加密的 payload JSON）
 const (
 	shareVersion    = 1
-	shareMagic0     = byte('S')        // 0x53
-	shareMagic1     = byte('D')        // 0x44
+	shareMagic0     = byte('S') // 0x53
+	shareMagic1     = byte('D') // 0x44
 	flagEncrypted   = byte(1 << 0)
 	kdfArgon2id     = byte(1) // 密码派生密钥（真加密）
 	kdfEmbedded     = byte(2) // 内置固定密钥（无密码混淆，非真加密）

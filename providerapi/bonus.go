@@ -17,11 +17,11 @@ func SetEmbedBonusProviders(data []byte) {
 
 // BonusProvider 注册送 token 的供应商信息
 type BonusProvider struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	BaseURL    string `json:"baseUrl"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	BaseURL     string `json:"baseUrl"`
 	RegisterURL string `json:"registerUrl"`
-	BonusRule  string `json:"bonusRule"`
+	BonusRule   string `json:"bonusRule"`
 }
 
 type bonusProvidersFile struct {

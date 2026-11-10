@@ -40,7 +40,7 @@ type Catalog struct {
 
 // upstreamOrder 决定重名时的归属优先级，必须与旧 ResolveModel 的查找顺序一致
 // （models.go 里依次查 workbuddy → opencode → deveco → joycode，先命中者胜）
-var upstreamOrder = []string{"workbuddy", "opencode", "deveco", "joycode"}
+var upstreamOrder = []string{"workbuddy", "opencode", "deveco", "joycode", "mcloud"}
 
 var (
 	catalogPtr atomic.Pointer[Catalog]
@@ -163,10 +163,10 @@ func BuildCatalog(entries []CatalogModel) *Catalog {
 	return c
 }
 
-// SeedCatalogEntries 把四个硬编码 slice 扁平化为目录条目（顺序 = upstreamOrder）
+// SeedCatalogEntries 把五个硬编码 slice 扁平化为目录条目（顺序 = upstreamOrder）
 func SeedCatalogEntries() []CatalogModel {
 	out := make([]CatalogModel, 0,
-		len(WorkBuddyModels)+len(OpenCodeModels)+len(DevEcoModels)+len(JoyCodeModels))
+		len(WorkBuddyModels)+len(OpenCodeModels)+len(DevEcoModels)+len(JoyCodeModels)+len(MCModels))
 
 	for _, m := range WorkBuddyModels {
 		out = append(out, CatalogModel{
@@ -196,6 +196,13 @@ func SeedCatalogEntries() []CatalogModel {
 			Stream: m.Stream, ToolCall: true, Free: m.Free,
 		})
 	}
+	for _, m := range MCModels {
+		out = append(out, CatalogModel{
+			ID: m.ID, Upstream: "mcloud", WireName: stripMcPrefix(m.ID),
+			Label: m.Label, Context: m.Context,
+			Stream: true, Reasoning: m.Reasoning, Free: m.Free,
+		})
+	}
 	return out
 }
 
@@ -203,6 +210,9 @@ func SeedCatalogEntries() []CatalogModel {
 func defaultWireName(id, upstreamName string) string {
 	if upstreamName == "workbuddy" {
 		return stripWbPrefix(id)
+	}
+	if upstreamName == "mcloud" {
+		return stripMcPrefix(id)
 	}
 	return id
 }
