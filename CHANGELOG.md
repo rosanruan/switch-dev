@@ -18,10 +18,13 @@
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-10
+
 ### 新增
 - 新增「中国移动云盘（灵犀）」渠道：复用移动云盘 App 登录态（RCS token 本地读 `accountdb.db`，Basic 头纯本地拼装），模型 id 形如 `mc/blian_qwen38_max`，支持流式（上游自有 SSE 实时转 OpenAI SSE）与非流式
   - 模型列表实时拉取（`chat/config/get`），自动跟随上游新模型；RCS token 30 天滚动，过期提示「打开 App 续期」
   - 凭据页/仪表盘/模型页/测评页/日志页均已接入渠道卡片与徽章
+- 移动云盘渠道适配 Windows：Windows 版客户端不写 `accountdb.db`，登录态改从 Chromium localStorage（LevelDB 的 `UserInfo` 键，含 RCS token / 手机号 / userDomainId）读取，复制副本避开客户端文件锁；可用 `MCLOUD_LEVELDB` 环境变量覆盖路径。macOS 仍读 `accountdb.db`，`MCLOUD_ACCOUNTDB` 可显式指定
 - WorkBuddy 模型支持动态拉取（调 `GET /v2/models` OpenAI 兼容端点，失败自动回退 DB 缓存或种子白名单）
 - WorkBuddy 种子白名单新增 `wb/hy4-preview`（Hy4 Preview），API 拉取失败时作为兜底
 - 使用趋势柱形图：本周/本月周期固定为完整范围（本周=周一~周日，本月=1日~月末），柱宽不再随数据量变化
