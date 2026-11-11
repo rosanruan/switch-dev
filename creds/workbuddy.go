@@ -1,10 +1,10 @@
 package creds
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,8 +33,30 @@ type WorkBuddyCred struct {
 	ExpiresAt    int64 // 毫秒时间戳
 	UID          string
 	Nickname     string
-	FetchedAt    time.Time
-	Valid        bool
+	// Domain 来自 info 文件 auth.domain，新版 WorkBuddy AI 客户端会记录实际登录域
+	// （如 www.workbuddy.ai）。非空时上游 base URL 以它为准——官方 2026 年把主端点
+	// 从 copilot.tencent.com 迁到了新域，旧域的 /v2/chat/completions 已被网关 401 拒绝。
+	Domain    string
+	FetchedAt time.Time
+	Valid     bool
+}
+
+// BaseURL 返回该凭据实际使用的上游 base URL：info 文件记录了登录域（auth.domain）时以它为准
+// —— 新版 WorkBuddy AI 客户端（2026-09）把主端点从 copilot.tencent.com 迁到 www.workbuddy.ai，
+// 旧域的 /v2/chat/completions 已被网关 401 拒绝；无 domain（旧版 CodeBuddy 客户端）回退 fallback。
+func (c *WorkBuddyCred) BaseURL(fallback string) string {
+	if c.Domain != "" {
+		return "https://" + c.Domain + "/v2"
+	}
+	return fallback
+}
+
+// Platform 返回该凭据对应产品的 platform 参数（auth/state 鉴权用）：新版 workbuddy-ai，旧版 workbuddy
+func (c *WorkBuddyCred) Platform() string {
+	if c.Domain != "" {
+		return "workbuddy-ai"
+	}
+	return "workbuddy"
 }
 
 // WorkBuddyCredManager WorkBuddy 凭据管理器
@@ -73,6 +95,9 @@ func (m *WorkBuddyCredManager) LoadCreds() (*WorkBuddyCred, error) {
 			TokenType    string `json:"tokenType"`
 			ExpiresIn    int64  `json:"expiresIn"`
 			ExpiresAt    int64  `json:"expiresAt"`
+			// domain 是新版 WorkBuddy AI 客户端记录的登录域（如 www.workbuddy.ai），
+			// 旧版 CodeBuddy 的 info 文件没有该字段
+			Domain string `json:"domain"`
 		} `json:"auth"`
 	}
 	if err := json.Unmarshal(data, &info); err != nil {
@@ -88,9 +113,20 @@ func (m *WorkBuddyCredManager) LoadCreds() (*WorkBuddyCred, error) {
 		ExpiresAt:    info.Auth.ExpiresAt,
 		UID:          info.Account.UID,
 		Nickname:     info.Account.Nickname,
+		Domain:       normalizeWorkBuddyDomain(info.Auth.Domain),
 		FetchedAt:    time.Now(),
 		Valid:        false,
 	}, nil
+}
+
+// normalizeWorkBuddyDomain 归一化 info 文件里的 domain：剥掉可能的协议前缀与斜杠，
+// 只留 host（"https://www.workbuddy.ai/" -> "www.workbuddy.ai"）
+func normalizeWorkBuddyDomain(domain string) string {
+	d := strings.TrimSpace(domain)
+	d = strings.TrimPrefix(d, "https://")
+	d = strings.TrimPrefix(d, "http://")
+	d = strings.Trim(d, "/")
+	return d
 }
 
 // EnsureCreds 确保有有效凭据（含自动 refresh 续期）
@@ -204,40 +240,31 @@ func (m *WorkBuddyCredManager) CredStatus() *CredStatusInfo {
 	return info
 }
 
-// UserInfoHeader 生成 X-Userinfo 头值：base64(JSON{"sub":uid})，与官方 CLI 的 buildUserInfoHeader 一致。
-// 官方语义：有 uid 时 X-User-Id 与 X-Userinfo 成对发送；无 uid 时两者都省略。返回 "" 表示应省略。
-func UserInfoHeader(uid string) string {
-	if uid == "" {
-		return ""
-	}
-	payload, err := json.Marshal(map[string]string{"sub": uid})
-	if err != nil {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString(payload)
-}
-
 // WorkBuddyAuthHeaders 返回与官方 WorkBuddy 客户端一致的鉴权请求头。
-// 用于 /plugin/auth/* 鉴权链路，使指纹与官方客户端一致，避免风控误伤。
+// 用于 /plugin/auth/* 鉴权链路与 /models 拉取，使指纹与官方客户端一致，避免风控误伤。
+// 对齐新版 CLI（@tencent-ai/codebuddy-code 2.147.x）auth 拦截器：X-User-Id / X-Domain / X-Product。
+// 注意：新版个人账号的请求不再携带 X-Userinfo（仅企业或代登场景才发，且格式已变为
+// {uin,owner_uin,...}），旧格式 base64({"sub":uid}) 已是过期指纹，这里不再构造。
 func WorkBuddyAuthHeaders(cred *WorkBuddyCred) map[string]string {
 	h := map[string]string{
 		"Authorization":    fmt.Sprintf("Bearer %s", cred.AccessToken),
 		"Content-Type":     "application/json",
 		"Accept":           "application/json",
 		"X-Requested-With": "XMLHttpRequest",
+		"X-Product":        "SaaS",
 	}
 	if cred.UID != "" {
 		h["X-User-Id"] = cred.UID
-		if ui := UserInfoHeader(cred.UID); ui != "" {
-			h["X-Userinfo"] = ui
-		}
+	}
+	if cred.Domain != "" {
+		h["X-Domain"] = cred.Domain
 	}
 	return h
 }
 
 // VerifyCreds 调 /v2/plugin/auth/state 验证 accessToken（code:0 = 有效）
 func (m *WorkBuddyCredManager) VerifyCreds(cred *WorkBuddyCred) (valid bool, statusCode int, err error) {
-	url := m.config.BaseURL + "/plugin/auth/state?platform=workbuddy"
+	url := cred.BaseURL(m.config.BaseURL) + "/plugin/auth/state?platform=" + cred.Platform()
 	body, status, err := httpPost(url, "", WorkBuddyAuthHeaders(cred))
 	if err != nil {
 		return false, -1, err
@@ -264,7 +291,7 @@ type WorkBuddyRefreshResult struct {
 
 // RefreshToken 用 refreshToken 续期 accessToken（内存缓存，不回写 info 文件）
 func (m *WorkBuddyCredManager) RefreshToken(cred *WorkBuddyCred) (*WorkBuddyRefreshResult, error) {
-	url := m.config.BaseURL + "/plugin/auth/token/refresh"
+	url := cred.BaseURL(m.config.BaseURL) + "/plugin/auth/token/refresh"
 	headers := WorkBuddyAuthHeaders(cred)
 	headers["X-Refresh-Token"] = cred.RefreshToken
 	headers["X-Auth-Refresh-Source"] = "plugin"

@@ -174,8 +174,9 @@ func mcContentText(raw json.RawMessage) string {
 // 超过模型 maxInputLength 时从最早轮次开始丢弃（system 保留）。
 func foldMCloudDialogue(body []byte) (dialogue, modelType string, err error) {
 	var req struct {
-		Model    string            `json:"model"`
-		Messages []mcOpenAIMessage `json:"messages"`
+		Model    string             `json:"model"`
+		Messages []mcOpenAIMessage  `json:"messages"`
+		Tools    []mcloudOpenAITool `json:"tools"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", "", fmt.Errorf("解析请求 body 失败: %w", err)
@@ -223,6 +224,11 @@ func foldMCloudDialogue(body []byte) (dialogue, modelType string, err error) {
 	if len(system) > 0 {
 		sysBlock = strings.Join(system, "\n\n") + "\n\n"
 	}
+	// 工具清单：灵犀不支持 OpenAI function calling，把 tools 定义转写成文本注入，
+	// 让模型知道可调用哪些工具并以 [调用工具 ...] 文本输出（响应侧再解析还原）。
+	if toolsPrompt := mcloudToolsPrompt(req.Tools); toolsPrompt != "" {
+		sysBlock += toolsPrompt + "\n\n"
+	}
 	const truncMarker = "（早期对话因超过模型输入上限已截断）\n\n"
 
 	limit := mcloudInputLimit(modelType)
@@ -257,6 +263,63 @@ func foldMCloudDialogue(body []byte) (dialogue, modelType string, err error) {
 		return "", "", fmt.Errorf("mcloud 请求折叠后对话为空")
 	}
 	return dialogue, modelType, nil
+}
+
+// mcloudOpenAITool OpenAI tools 单项（仅取注入文本所需的字段）。
+// 灵犀不支持 function calling，这里只从 tools 定义里提取 name + required 参数名 +
+// 精简描述，转写成文本注入 system，避免把完整 input_schema 塞进 prompt 导致爆炸。
+type mcloudOpenAITool struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
+	} `json:"function"`
+}
+
+// mcloudToolsPrompt 把 tools 定义转写为注入 system 的文本清单。
+// 无 tools 时返回空串（纯聊天请求不注入，避免干扰模型）。
+func mcloudToolsPrompt(tools []mcloudOpenAITool) string {
+	if len(tools) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("你可以调用以下工具。需要调用工具时，在回复末尾严格输出一行：\n")
+	b.WriteString("[调用工具 工具名({\"参数名\":\"值\"})]\n")
+	b.WriteString("工具名必须来自下方列表，参数必须是合法 JSON。\n\n")
+	for _, t := range tools {
+		name := t.Function.Name
+		if name == "" {
+			continue
+		}
+		b.WriteString("- ")
+		b.WriteString(name)
+
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+			Required   []string                   `json:"required"`
+		}
+		if len(t.Function.Parameters) > 0 {
+			_ = json.Unmarshal(t.Function.Parameters, &schema)
+		}
+		if len(schema.Required) > 0 {
+			b.WriteString("(" + strings.Join(schema.Required, ", ") + ")")
+		}
+
+		desc := t.Function.Description
+		if idx := strings.IndexByte(desc, '\n'); idx >= 0 {
+			desc = desc[:idx]
+		}
+		desc = strings.TrimSpace(desc)
+		if len(desc) > 80 {
+			desc = desc[:80] + "…"
+		}
+		if desc != "" {
+			b.WriteString(": " + desc)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // ====== 上游请求/响应结构 ======
@@ -349,9 +412,10 @@ type mcloudSSEFrame struct {
 // ====== SSE → OpenAI SSE 转换器 ======
 
 type mcStreamDelta struct {
-	Role             string `json:"role,omitempty"`
-	Content          string `json:"content,omitempty"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Role             string             `json:"role,omitempty"`
+	Content          string             `json:"content,omitempty"`
+	ReasoningContent string             `json:"reasoning_content,omitempty"`
+	ToolCalls        []mcStreamToolCall `json:"tool_calls,omitempty"`
 }
 
 type mcStreamChoice struct {
@@ -386,6 +450,7 @@ type mcloudSSEConverter struct {
 	model    string // 实际服务的 modelType（首帧 flowResult.modelType）
 	content  strings.Builder
 	reason   strings.Builder
+	parser   mcloudToolCallParser // 文本工具调用解析器：识别 [调用工具 ...] 并转成 tool_calls delta
 	// promptRunes 折叠后的 dialogue 字符数：灵犀不返回 usage，
 	// 输入/输出 token 都按字符估算（供日志/计费），口径同 proxy.EstimateOutputTokens。
 	promptRunes int
@@ -471,8 +536,13 @@ func (c *mcloudSSEConverter) step() error {
 			c.emitDelta(mcStreamDelta{ReasoningContent: fr.ReasoningContent})
 		}
 		if fr.OutContent != "" {
-			c.content.WriteString(fr.OutContent)
-			c.emitDelta(mcStreamDelta{Content: fr.OutContent})
+			// 文本经工具调用解析器：识别 [调用工具 ...] 并转成 tool_calls delta，其余透传为 content
+			for _, d := range c.parser.feed(fr.OutContent) {
+				if d.Content != "" {
+					c.content.WriteString(d.Content)
+				}
+				c.emitDelta(d)
+			}
 		}
 	}
 	if fr != nil && fr.FinishReason == "stop" || frame.Data.FinishReason == "stop" {
@@ -498,12 +568,24 @@ func (c *mcloudSSEConverter) emitDelta(delta mcStreamDelta) {
 }
 
 func (c *mcloudSSEConverter) emitFinish() {
+	// 先把未决文本 flush（可能有 [调用工具 Name] 无参数工具调用等残余）
+	for _, d := range c.parser.flush() {
+		if d.Content != "" {
+			c.content.WriteString(d.Content)
+		}
+		c.emitDelta(d)
+	}
+
+	finishReason := "stop"
+	if c.parser.hasToolCall() {
+		finishReason = "tool_calls"
+	}
 	chunk := mcStreamChunk{
 		ID:      "chatcmpl-mcloud",
 		Object:  "chat.completion.chunk",
 		Created: time.Now().Unix(),
 		Model:   c.model,
-		Choices: []mcStreamChoice{{Index: 0, Delta: mcStreamDelta{}, FinishReason: "stop"}},
+		Choices: []mcStreamChoice{{Index: 0, Delta: mcStreamDelta{}, FinishReason: finishReason}},
 		Usage:   c.usage(),
 	}
 	c.writeChunk(chunk)
@@ -511,14 +593,50 @@ func (c *mcloudSSEConverter) emitFinish() {
 }
 
 // usage 估算整条请求的 token：灵犀任何帧都不带 usage，日志/计费全靠这里。
-// 输出 = 正文 + 思考内容的字符估算；输入 = 折叠后 dialogue 的字符估算。
+// 输出 = 正文 + 思考内容 + 工具调用参数的字符估算；输入 = 折叠后 dialogue 的字符估算。
 func (c *mcloudSSEConverter) usage() *mcStreamUsage {
 	prompt := mcloudEstimateTokens(c.promptRunes)
-	completion := mcloudEstimateTokens(len([]rune(c.content.String())) + len([]rune(c.reason.String())))
+	completion := mcloudEstimateTokens(len([]rune(c.content.String())) + len([]rune(c.reason.String())) + c.toolCallRunes())
 	if prompt+completion == 0 {
 		return nil
 	}
 	return &mcStreamUsage{PromptTokens: prompt, CompletionTokens: completion, TotalTokens: prompt + completion}
+}
+
+// toolCallRunes 统计已解析工具调用的 name + args 字符数（工具调用参数也是输出 token）。
+func (c *mcloudSSEConverter) toolCallRunes() int {
+	n := 0
+	for _, tc := range c.parser.toolCalls {
+		n += len([]rune(tc.name)) + len([]rune(tc.args))
+	}
+	return n
+}
+
+// finishReason 非流式聚合用：解析出过工具调用时返回 tool_calls，否则 stop。
+func (c *mcloudSSEConverter) finishReason() string {
+	if c.parser.hasToolCall() {
+		return "tool_calls"
+	}
+	return "stop"
+}
+
+// aggregatedToolCalls 把解析出的工具调用转成聚合结构（供非流式 aggregatedResponse 使用）。
+func (c *mcloudSSEConverter) aggregatedToolCalls() []aggregatedToolCall {
+	if len(c.parser.toolCalls) == 0 {
+		return nil
+	}
+	out := make([]aggregatedToolCall, 0, len(c.parser.toolCalls))
+	for _, tc := range c.parser.toolCalls {
+		out = append(out, aggregatedToolCall{
+			ID:   tc.id,
+			Type: "function",
+			Function: aggregatedFunction{
+				Name:      tc.name,
+				Arguments: tc.args,
+			},
+		})
+	}
+	return out
 }
 
 // mcloudEstimateTokens 与 proxy.EstimateOutputTokens 同口径（约 3 字符 1 token，至少 1）。
@@ -798,8 +916,9 @@ func (u *MCloudUpstream) Call(ctx context.Context, body []byte) (*Response, erro
 				Role:             "assistant",
 				ReasoningContent: conv.reason.String(),
 				Content:          conv.content.String(),
+				ToolCalls:        conv.aggregatedToolCalls(),
 			},
-			FinishReason: "stop",
+			FinishReason: conv.finishReason(),
 		}},
 	}
 	// 非流式同样补估算 usage，否则日志/计费 token 全为 0

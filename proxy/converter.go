@@ -161,11 +161,13 @@ func AnthropicToOpenAIWorkbuddy(body *AnthropicRequest) *OpenAIRequest {
 
 // AnthropicToOpenAIMCloud 移动云盘（灵犀）：model 去掉 mc/ 前缀还原为上游 modelType，
 // 否则 config/set 会收到 mc/blian_qwen38_max 被上游判为非法参数（01000001）。
-// 灵犀无函数调用，tools 不透传（折叠阶段把 tool_calls 按文本转写）。
+// 灵犀无函数调用，但 tools 定义需要透传下去：折叠阶段（foldMCloudDialogue）会把
+// tools 清单转写成文本注入对话，让上游模型知道可调用哪些工具并以 [调用工具 ...] 文本
+// 输出工具调用，响应侧再解析还原为结构化 tool_calls。
 func AnthropicToOpenAIMCloud(body *AnthropicRequest) *OpenAIRequest {
 	resolvedModel := ResolveModel(body.Model)
 
-	messages, _ := anthropicMessagesToOpenAI(body)
+	messages, tools := anthropicMessagesToOpenAI(body)
 
 	maxTokens := 4096
 	if body.MaxTokens > 0 {
@@ -187,6 +189,9 @@ func AnthropicToOpenAIMCloud(body *AnthropicRequest) *OpenAIRequest {
 	}
 	if len(body.StopSequences) > 0 {
 		openai.Stop = body.StopSequences
+	}
+	if tools != nil {
+		openai.Tools = tools
 	}
 	return openai
 }

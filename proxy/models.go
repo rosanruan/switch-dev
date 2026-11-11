@@ -105,7 +105,7 @@ func init() {
 	}
 }
 
-// ====== WorkBuddy 模型白名单（腾讯 CodeBuddy，免费档） ======
+// ====== WorkBuddy 模型白名单（腾讯 WorkBuddy AI，原 CodeBuddy） ======
 // 内部 id 用 wb/ 前缀隔离，避免与 DevEco 的 glm-5.1 等重名；发上游前 stripWbPrefix 还原
 
 type WorkBuddyModel struct {
@@ -120,6 +120,12 @@ type WorkBuddyModel struct {
 }
 
 var WorkBuddyModels = []WorkBuddyModel{
+	// 2026-09 WorkBuddy AI 改版后的档位模型：官方客户端只暴露这三个（+auto），
+	// 具体后端模型由官方按档位动态调度。三者均 48k 输出 / 200k 输入、支持工具/视觉/推理。
+	// 旧的具体模型名（glm-5.0 等，见下）是否仍被新端点接受待实测，实测不支持后应移除。
+	{ID: "wb/fast-model", Label: "快速 Fast (WorkBuddy)", Context: 200000, Output: 48000, Vision: true, ToolCall: true, Reasoning: true},
+	{ID: "wb/balanced-model", Label: "均衡 Balanced (WorkBuddy)", Context: 200000, Output: 48000, Vision: true, ToolCall: true, Reasoning: true},
+	{ID: "wb/deep-model", Label: "极致 Deep (WorkBuddy)", Context: 200000, Output: 48000, Vision: true, ToolCall: true, Reasoning: true},
 	{ID: "wb/glm-5.0", Label: "GLM-5.0 (WorkBuddy)", Output: 48000, Vision: true, ToolCall: true, Reasoning: true},
 	{ID: "wb/glm-5.1", Label: "GLM-5.1 (WorkBuddy)", Output: 48000, Vision: true, ToolCall: true, Reasoning: true},
 	{ID: "wb/glm-5.0-turbo", Label: "GLM-5.0-Turbo (WorkBuddy)", Output: 48000, Vision: true, ToolCall: true, Reasoning: true},

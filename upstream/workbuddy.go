@@ -14,6 +14,9 @@ import (
 	"switchdev/creds"
 )
 
+// workBuddyCLIVersion 对齐官方 CLI（@tencent-ai/codebuddy-code）的版本号，X-IDE-Version 指纹用
+const workBuddyCLIVersion = "2.147.0"
+
 // WorkBuddyUpstream 腾讯 CodeBuddy(WorkBuddy) 适配器
 // 上游只支持 stream:true：流式请求走 CallStream 直传 SSE，
 // 非流式请求走 Call 在内部聚合成完整 JSON，对上层透明
@@ -74,7 +77,7 @@ func (u *WorkBuddyUpstream) FetchModels(ctx context.Context) ([]FetchedModel, er
 		return nil, err
 	}
 
-	url := u.mgr.Config().BaseURL + "/models"
+	url := cred.BaseURL(u.mgr.Config().BaseURL) + "/models"
 	body, status, err := httpGet(url, creds.WorkBuddyAuthHeaders(cred))
 	if err != nil {
 		return nil, fmt.Errorf("workbuddy /models 请求失败: %w", err)
@@ -190,26 +193,41 @@ func (u *WorkBuddyUpstream) buildChatRequest(ctx context.Context, body []byte, c
 		return nil, "", fmt.Errorf("重新编码请求 body 失败: %w", err)
 	}
 
-	url := u.mgr.Config().BaseURL + "/chat/completions"
+	url := cred.BaseURL(u.mgr.Config().BaseURL) + "/chat/completions"
 	reqID := fmt.Sprintf("req-%d-%s", time.Now().Unix(), randString(6))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, "", err
 	}
+	// 会话头：每次请求生成新 ID（32 位无横线，对齐官方 CLI 的 randomUUID().replaceAll("-","")）
+	convID := randString(32)
+	msgID := randString(32)
 	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	req.Header.Set("Accept", "text/event-stream") // 出站恒为流式（上游只认 stream:true）
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cred.AccessToken))
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Private-Data", "false")
-	// 与官方 WorkBuddy CLI 的 auth 拦截器一致：每个 chat 请求必带 X-Requested-With；
-	// 有 uid 时 X-User-Id 与 X-Userinfo 成对发送，缺一会被风控识别为非官方客户端
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("X-Private-Data", "false")
+	// 以下对齐新版 WorkBuddy AI CLI（@tencent-ai/codebuddy-code 2.147.x）每个 chat 请求
+	// 经 axiosToFetchAdapter / 产品拦截器携带的头；漏齐会被网关识别为非官方客户端
+	req.Header.Set("X-Product", "SaaS") // ProductEndpointHttpInterceptor 加到所有请求
+	req.Header.Set("X-IDE-Type", "CLI")
+	req.Header.Set("X-IDE-Name", "CLI") // clientInfo 缺省时官方也是回退到同一常量
+	req.Header.Set("X-IDE-Version", workBuddyCLIVersion)
+	req.Header.Set("X-Agent-Intent", "craft") // 官方默认意图
+	req.Header.Set("X-Agent-Type", "main")    // resolveAgentType 的默认分支
+	req.Header.Set("X-Conversation-ID", convID)
+	req.Header.Set("X-Conversation-Request-ID", convID)
+	req.Header.Set("X-Conversation-Message-ID", msgID)
+	req.Header.Set("X-Request-ID", msgID)
 	if cred.UID != "" {
 		req.Header.Set("X-User-Id", cred.UID)
-		if ui := creds.UserInfoHeader(cred.UID); ui != "" {
-			req.Header.Set("X-Userinfo", ui)
-		}
 	}
+	if cred.Domain != "" {
+		req.Header.Set("X-Domain", cred.Domain)
+	}
+	// 官方 CLI 的 fetch 适配器显式删除 User-Agent；置空后 Go http 不会发送该头
+	req.Header.Set("User-Agent", "")
 	// 不设 Accept-Encoding，让 Go http.Client 自动透明解压 gzip
 	return req, reqID, nil
 }

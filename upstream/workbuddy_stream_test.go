@@ -181,9 +181,67 @@ func TestWorkBuddyCallStreamRequestShape(t *testing.T) {
 	if gotHeader.Get("X-User-Id") != "uid-42" {
 		t.Errorf("X-User-Id = %q, want uid-42", gotHeader.Get("X-User-Id"))
 	}
-	// 有 uid 时 X-Userinfo 必须成对出现
-	if gotHeader.Get("X-Userinfo") == "" {
-		t.Error("有 uid 时缺 X-Userinfo，缺一会被风控拦")
+	// 新版 CLI（@tencent-ai/codebuddy-code 2.147.x）个人账号不再发送 X-Userinfo
+	// （仅企业/代登场景才发，且格式已变为 {uin,owner_uin,...}）；旧格式 base64({"sub":uid}) 已是过期指纹
+	if gotHeader.Get("X-Userinfo") != "" {
+		t.Error(`不应再发送 X-Userinfo，旧格式 base64({"sub":uid}) 已是过期指纹`)
+	}
+	// 新版会话头逐项对齐（axiosToFetchAdapter / 产品拦截器）
+	if gotHeader.Get("X-Product") != "SaaS" {
+		t.Error("缺 X-Product: SaaS（产品拦截器加到所有请求）")
+	}
+	if gotHeader.Get("X-Agent-Intent") != "craft" || gotHeader.Get("X-Agent-Type") != "main" {
+		t.Error("缺 X-Agent-Intent: craft / X-Agent-Type: main")
+	}
+	reqID := gotHeader.Get("X-Request-ID")
+	if reqID == "" || len(reqID) != 32 || reqID != gotHeader.Get("X-Conversation-Message-ID") {
+		t.Errorf("X-Request-ID = %q，应为 32 位且与 X-Conversation-Message-ID 同值", reqID)
+	}
+	if convID := gotHeader.Get("X-Conversation-ID"); convID == "" || convID != gotHeader.Get("X-Conversation-Request-ID") {
+		t.Error("X-Conversation-ID 与 X-Conversation-Request-ID 应成对同值")
+	}
+	if gotHeader.Get("X-IDE-Type") != "CLI" || gotHeader.Get("X-IDE-Name") != "CLI" || gotHeader.Get("X-IDE-Version") != workBuddyCLIVersion {
+		t.Errorf("IDE 头不对: type=%q name=%q version=%q",
+			gotHeader.Get("X-IDE-Type"), gotHeader.Get("X-IDE-Name"), gotHeader.Get("X-IDE-Version"))
+	}
+	if gotHeader.Get("Accept") != "text/event-stream" {
+		t.Errorf("Accept = %q, want text/event-stream（出站恒为流式）", gotHeader.Get("Accept"))
+	}
+	// 官方 fetch 适配器显式删除 User-Agent；置空值时 Go http 不发送该头
+	if ua := gotHeader.Get("User-Agent"); ua != "" {
+		t.Errorf("User-Agent = %q, want 空（官方不带 UA）", ua)
+	}
+	// 测试凭据无 domain（旧版 info 文件），不应携带 X-Domain
+	if gotHeader.Get("X-Domain") != "" {
+		t.Error("无 domain 的旧版凭据不应带 X-Domain")
+	}
+}
+
+// TestWorkBuddyChatURLFollowsDomain info 文件带 auth.domain（新版 WorkBuddy AI）时，
+// chat URL 必须发往新域；无 domain 时回退配置默认（兼容旧版 CodeBuddy 客户端用户）
+func TestWorkBuddyChatURLFollowsDomain(t *testing.T) {
+	up := &WorkBuddyUpstream{mgr: creds.NewWorkBuddyCredManager(creds.WorkBuddyConfig{
+		BaseURL: "https://copilot.tencent.com/v2",
+	})}
+	cases := []struct {
+		name   string
+		domain string
+		want   string
+	}{
+		{"新版带 domain", "www.workbuddy.ai", "https://www.workbuddy.ai/v2/chat/completions"},
+		{"旧版无 domain", "", "https://copilot.tencent.com/v2/chat/completions"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cred := &creds.WorkBuddyCred{AccessToken: "tok", UID: "u1", Domain: c.domain}
+			req, _, err := up.buildChatRequest(context.Background(), []byte(`{"messages":[]}`), cred)
+			if err != nil {
+				t.Fatalf("buildChatRequest: %v", err)
+			}
+			if got := req.URL.String(); got != c.want {
+				t.Errorf("URL = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

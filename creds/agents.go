@@ -75,11 +75,11 @@ var AgentRegistry = []AgentInfo{
 		Name:        "WorkBuddy",
 		Upstream:    "workbuddy",
 		Type:        AgentTypeGUI,
-		Desc:        "腾讯 CodeBuddy 桌面版，OAuth token 明文存本地，免费模型通道",
+		Desc:        "腾讯 WorkBuddy AI（原 CodeBuddy）桌面版，OAuth token 明文存本地，免费模型通道",
 		DownloadURL: "https://workbuddy.ai",
 		InstallCmd:  "", // GUI 应用，无 CLI 安装命令
 		LoginCmd:    "打开 WorkBuddy 客户端登录",
-		LoginURL:    "https://copilot.tencent.com/login?platform=workbuddy",
+		LoginURL:    "https://www.workbuddy.ai/login?platform=workbuddy-ai",
 	},
 	{
 		Name:        "中国移动云盘",

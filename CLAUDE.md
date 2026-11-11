@@ -33,7 +33,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `executeChainStream`（`proxy/router.go`）对未实现 `StreamCaller` 的上游会跳过并记 `stream_unsupported` 日志，链里下一个顶上；整条链都没有流式上游时返回 `nil,"","",nil` 让 handler 回退伪流式
   - **加新上游务必实现 `CallStream`** —— 只实现 `Call` 会让流式请求退化成「等整段生成完再一次性吐出」，首字延迟等于完整生成耗时（WorkBuddy 曾因此慢 20-40s）
   - 各 `doCallStream` 都用 `bufio.Reader.Peek(256)` 做空流/非 SSE 校验。**注意 `Peek(n)` 会阻塞到攒够 n 字节**（实测：单 chunk ~78 字节、上游每 chunk 间隔 200ms 时，Peek 额外增加约 600ms 首字延迟）。这是所有上游共有的固定成本，量级远小于伪流式，但写这类测试时假网关的第一段必须 ≥256 字节，否则卡住的是 Peek 而不是被测逻辑
-- **WorkBuddy 特殊性**：上游只认 `stream:true`（非流式返回 `code:11101`）。`CallStream` 直传 SSE；`Call`（非流式客户端请求、模型测评用）内部读 SSE 经 `aggregateOpenAISSE` 聚合成完整 OpenAIResponse JSON，对上层透明。两条路径共用 `buildChatRequest` 构造请求 —— 那批 `delete`（`stream_options` 会触发 11140）与 `X-Requested-With`/`X-User-Id`+`X-Userinfo` 头是对齐官方 CLI 绕风控的，**漏一项会被识别为非官方客户端**；也是唯一不能注入 `stream_options.include_usage` 的上游（其余四个都注入以拿 usage，WorkBuddy 缺 usage 时由 `sse_stream.go` 按 rune 估算兜底）
+- **WorkBuddy 特殊性**：上游只认 `stream:true`（非流式返回 `code:11101`）。`CallStream` 直传 SSE；`Call`（非流式客户端请求、模型测评用）内部读 SSE 经 `aggregateOpenAISSE` 聚合成完整 OpenAIResponse JSON，对上层透明。两条路径共用 `buildChatRequest` 构造请求 —— 那批 `delete`（`stream_options` 会触发 11140）与请求头（`X-Requested-With`/`X-User-Id`/`X-Product: SaaS`/条件 `X-Domain`/会话头 `X-Conversation-*`+`X-Request-ID`/`X-IDE-*`/`X-Agent-*`，User-Agent 置空使其不发送）是对齐官方 CLI 绕风控的，**漏一项会被识别为非官方客户端**；也是唯一不能注入 `stream_options.include_usage` 的上游（其余四个都注入以拿 usage，WorkBuddy 缺 usage 时由 `sse_stream.go` 按 rune 估算兜底）
+- **WorkBuddy 端点迁移（2026-09，升级为 WorkBuddy AI）**：官方主端点从 `copilot.tencent.com` 迁到 `www.workbuddy.ai`（旧域 `/v2/chat/completions` 被 nginx 401 拒绝，auth 端点仍跨域兼容——所以预校验通过但 chat 全挂）。真相来源是 info 文件 `auth.domain`：`WorkBuddyCred.Domain` 非空时 `cred.BaseURL(fallback)` 返回 `https://<domain>/v2`、`cred.Platform()` 返回 `workbuddy-ai`，凭据校验/续期/chat/models 全部跟随；旧版客户端的 info 无该字段则回退 `copilot.tencent.com/v2` 不受影响。新版个人账号**不发 X-Userinfo**（旧格式 `base64({"sub":uid})` 已是过期指纹，勿再加回；仅企业/代登场景才发且格式已变）
 - 模型 id 隔离：WorkBuddy 模型用 `wb/` 前缀（如 `wb/glm-5.0`），避免与 DevEco 的 glm-5.1 重名；`ResolveUpstream` 识别前缀路由，发上游前 `stripWbPrefix` 还原
 - service.Core 实现 proxy.EventLogger，记录日志 + 通过 `application.Get().Event.Emit` 推送事件到前端
 
@@ -49,7 +50,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `db.SyncUpstreamCatalog` 是**全量覆盖**语义（能把 context 改小、把能力位关掉）；旧的 `db.UpsertModel` 只能升不能降，别拿来做目录同步。落库时跳过 `""` 和 `"auto"`（对齐 `db/logstore.go: upsertModelInTx`）
 - `db` 包 import `proxy`，故 **`proxy` 不能 import `db`**；目录必须在 `service`/`main` 装配后注入 proxy
 - 加列走 `db.addColumns`（`PRAGMA table_info` 探测 + `ALTER TABLE`，幂等），本项目**没有版本化迁移框架**
-- WorkBuddy 无 `/models` 端点（`upstream/workbuddy.go: FetchModels` 主动返回 error），只用种子白名单，UI 标「本地」
+- WorkBuddy 现在也参与目录实时拉取（`FetchModels` 调 `GET {cred.BaseURL()}/models`，跟随端点迁移）；拉取失败由 `MergeModels` 回退种子白名单（该上游历史上无 /models 端点，失败是常态路径）
 - 目录编排函数刻意写成**自由函数**（`service.LoadCatalogFromDB`/`service.StartCatalogRefresh`）而非 ConfigService 方法 —— Wails 会把 service 的所有导出方法暴露到前端 bindings，内部逻辑不该泄漏进去
 
 ## 构建与测试
