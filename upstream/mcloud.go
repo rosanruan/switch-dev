@@ -70,6 +70,24 @@ func (e *mcloudModelMismatchError) Error() string {
 	return fmt.Sprintf("mcloud 模型不一致: 服务端 %s ≠ 目标 %s", e.got, e.want)
 }
 
+// ====== 会话复用 ======
+
+// mcloudSessionIdleTimeout 会话闲置超时：超过此时间未使用的会话自动丢弃，
+// 下次请求创建新会话（对齐 webai 前端行为，防止服务端会话过期后续接失败）。
+const mcloudSessionIdleTimeout = 30 * time.Minute
+
+// mcloudSession 记录一次云盘 AI 工作台会话的续接信息。
+type mcloudSession struct {
+	SessionID  string
+	DialogueID string
+	LastUsedAt time.Time
+}
+
+// isExpired 会话是否已闲置超时
+func (s *mcloudSession) isExpired() bool {
+	return s == nil || s.SessionID == "" || time.Since(s.LastUsedAt) > mcloudSessionIdleTimeout
+}
+
 // ====== 上游实现 ======
 
 // MCloudUpstream 中国移动云盘（灵犀 / 139 邮箱 webai）适配器。
@@ -77,6 +95,8 @@ func (e *mcloudModelMismatchError) Error() string {
 // 响应 SSE 帧转换为标准 OpenAI SSE（CallStream）或聚合为 OpenAIResponse JSON（Call）。
 // 模型选择是服务端账号级偏好（chat 请求不带模型字段），由 modelMu 串行化
 // 「切模型 → 服务端绑定」窗口；锁在收到首个 SSE 数据帧后释放，不锁整条流。
+// 会话复用：从 SSE 首帧提取 sessionId/dialogueId，后续请求通过 continuationInfo
+// 续接同一会话，使云盘 AI 工作台上一个项目的多轮对话显示在同一会话中。
 type MCloudUpstream struct {
 	mgr          *creds.MCloudCredManager
 	client       *http.Client // config set / config get 等短请求
@@ -84,6 +104,9 @@ type MCloudUpstream struct {
 
 	modelMu      sync.Mutex // 串行化「切模型 → 服务端绑定」窗口
 	currentModel string     // 最近一次成功 set 的 modelType
+
+	sessionMu     sync.Mutex    // 保护 activeSession
+	activeSession *mcloudSession // 当前活跃会话（单实例全局复用）
 }
 
 func NewMCloudUpstream(mgr *creds.MCloudCredManager) *MCloudUpstream {
@@ -169,8 +192,8 @@ func mcContentText(raw json.RawMessage) string {
 }
 
 // foldMCloudDialogue 把 OpenAI messages 折叠成单个 dialogue 文本。
-// 无状态方案：每轮新会话（sessionId 空），全量历史以转写形式传入，
-// 免维护 sessionId 映射（无过期 / 无 GC / 重启安全）。
+// 会话复用方案：通过 continuationInfo 携带 sessionId/dialogueId 续接同一会话，
+// 全量历史仍以转写形式传入（服务端可能不基于 sessionId 维护上下文，需抓包确认）。
 // 超过模型 maxInputLength 时从最早轮次开始丢弃（system 保留）。
 func foldMCloudDialogue(body []byte) (dialogue, modelType string, err error) {
 	var req struct {
@@ -362,13 +385,14 @@ type mcloudDialogueInput struct {
 
 type mcloudChatRequest struct {
 	ApplicationType  string              `json:"applicationType"`
+	SessionID        string              `json:"sessionId,omitempty"` // 会话复用：首轮空串由服务端创建，后续轮次带回
 	DialogueInput    mcloudDialogueInput `json:"dialogueInput"`
 	SourceChannel    string              `json:"sourceChannel"`
 	UserID           string              `json:"userId"`
-	ContinuationInfo any                 `json:"continuationInfo"`
+	ContinuationInfo any                 `json:"continuationInfo"` // 始终 null，仅断线重连时使用
 }
 
-func buildMCloudChatBody(dialogue, userID string) ([]byte, error) {
+func buildMCloudChatBody(dialogue, userID string, sess *mcloudSession) ([]byte, error) {
 	req := mcloudChatRequest{
 		ApplicationType: "chat",
 		DialogueInput: mcloudDialogueInput{
@@ -382,8 +406,13 @@ func buildMCloudChatBody(dialogue, userID string) ([]byte, error) {
 			ExtInfo:      "{}",
 			VersionInfo:  mcloudVersionInfo{PCVersion: mcloudPCVersion, H5Version: mcloudH5Version},
 		},
-		SourceChannel: mcloudSourceChannel,
-		UserID:        userID,
+		SourceChannel:    mcloudSourceChannel,
+		UserID:           userID,
+		ContinuationInfo: nil, // 始终 null，仅断线重连时才带 {dialogueId, index}
+	}
+	// 会话复用：非首轮时带上 sessionId（对齐官方客户端行为）
+	if sess != nil && !sess.isExpired() {
+		req.SessionID = sess.SessionID
 	}
 	return json.Marshal(req)
 }
@@ -456,6 +485,10 @@ type mcloudSSEConverter struct {
 	promptRunes int
 	sawFrame    bool
 	err         error
+	// sessionID/dialogueID 从首帧 data.sessionId/data.dialogueId 提取，
+	// 供 prepareChat 更新 activeSession 实现会话复用。
+	sessionID  string
+	dialogueID string
 }
 
 func newMCloudSSEConverter(body io.ReadCloser) *mcloudSSEConverter {
@@ -515,6 +548,12 @@ func (c *mcloudSSEConverter) step() error {
 		return nil // 跳过无法解析的帧
 	}
 	c.sawFrame = true
+
+	// 从首帧提取 sessionId/dialogueId，供会话复用
+	if c.sessionID == "" && frame.Data.SessionID != "" {
+		c.sessionID = frame.Data.SessionID
+		c.dialogueID = frame.Data.DialogueID
+	}
 
 	if frame.Code != mcloudCodeOK {
 		detail := fmt.Sprintf("code=%s msg=%s", frame.Code, frame.Message)
@@ -737,28 +776,54 @@ func (r *idleTimeoutReader) watch() {
 
 // ====== 调用主流程 ======
 
-// prepareChat 折叠 → 切模型 → 发起 chat → 预读首帧。带鉴权/模型不一致重试。
+// mcloudSessionError 会话续接失败（服务端拒绝已过期/无效的 continuationInfo）。
+// 触发清除本地缓存的 session 并不带 continuationInfo 重试。
+type mcloudSessionError struct{ detail string }
+
+func (e *mcloudSessionError) Error() string { return "mcloud 会话续接失败: " + e.detail }
+
+// prepareChat 折叠 → 获取会话 → 切模型 → 发起 chat → 预读首帧 → 更新会话。
+// 带鉴权/模型不一致/会话过期重试。
 func (u *MCloudUpstream) prepareChat(ctx context.Context, body []byte) (*mcloudSSEConverter, string, error) {
 	dialogue, modelType, err := foldMCloudDialogue(body)
 	if err != nil {
 		return nil, "", err
 	}
 
+	// 获取当前活跃会话（超时自动丢弃）
+	u.sessionMu.Lock()
+	sess := u.activeSession
+	if sess.isExpired() {
+		sess = nil
+		u.activeSession = nil
+	}
+	u.sessionMu.Unlock()
+
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 4; attempt++ {
 		cred, err := u.mgr.EnsureCreds()
 		if err != nil {
 			return nil, "", err
 		}
 		basic := creds.MCloudBasicAuth(cred)
 
-		chatBody, err := buildMCloudChatBody(dialogue, cred.UserID)
+		chatBody, err := buildMCloudChatBody(dialogue, cred.UserID, sess)
 		if err != nil {
 			return nil, "", err
 		}
 
 		conv, reqID, err := u.doStartChat(ctx, chatBody, modelType, basic, len([]rune(dialogue)))
 		if err == nil {
+			// 成功后更新会话状态
+			u.sessionMu.Lock()
+			if conv.sessionID != "" {
+				u.activeSession = &mcloudSession{
+					SessionID:  conv.sessionID,
+					DialogueID: conv.dialogueID,
+					LastUsedAt: time.Now(),
+				}
+			}
+			u.sessionMu.Unlock()
 			return conv, reqID, nil
 		}
 		var authErr *mcloudAuthError
@@ -774,6 +839,17 @@ func (u *MCloudUpstream) prepareChat(ctx context.Context, body []byte) (*mcloudS
 			u.modelMu.Lock()
 			u.currentModel = ""
 			u.modelMu.Unlock()
+			lastErr = err
+			continue
+		}
+		var sessErr *mcloudSessionError
+		if errors.As(err, &sessErr) && sess != nil {
+			// 会话续接失败（服务端拒绝过期的 continuationInfo）：
+			// 清除本地 session，下一轮不带 continuationInfo 重试
+			u.sessionMu.Lock()
+			u.activeSession = nil
+			u.sessionMu.Unlock()
+			sess = nil
 			lastErr = err
 			continue
 		}
@@ -820,6 +896,11 @@ func (u *MCloudUpstream) doStartChat(ctx context.Context, chatBody []byte, model
 		if resp.StatusCode == 401 {
 			return nil, "", &mcloudAuthError{detail: detail}
 		}
+		// 检测会话续接失败：服务端可能返回特定错误表示 continuationInfo 无效
+		bodyStr := string(errBody)
+		if strings.Contains(bodyStr, "sessionId") || strings.Contains(bodyStr, "会话") || strings.Contains(bodyStr, "session") {
+			return nil, "", &mcloudSessionError{detail: detail}
+		}
 		return nil, "", fmt.Errorf("mcloud chat 上游错误: %s", detail)
 	}
 
@@ -828,6 +909,10 @@ func (u *MCloudUpstream) doStartChat(ctx context.Context, chatBody []byte, model
 	if err := conv.prime(); err != nil {
 		u.modelMu.Unlock()
 		conv.Close()
+		// prime 阶段出错也可能是会话过期导致的首帧错误
+		if isSessionRelatedError(err) {
+			return nil, "", &mcloudSessionError{detail: err.Error()}
+		}
 		return nil, "", err
 	}
 	// 首帧 modelType 校验：服务端已绑定模型，可安全释放锁
@@ -840,7 +925,18 @@ func (u *MCloudUpstream) doStartChat(ctx context.Context, chatBody []byte, model
 	return conv, reqID, nil
 }
 
+// isSessionRelatedError 判断错误是否与会话续接失败相关
+func isSessionRelatedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "sessionId") || strings.Contains(s, "会话") ||
+		strings.Contains(s, "continuation") || strings.Contains(s, "dialogueId")
+}
+
 // setModelLocked 切换服务端账号级模型偏好（config/set，v1 头）。调用方须持有 modelMu。
+// 切换模型时清除会话缓存：服务端 config/set 可能使当前会话失效。
 func (u *MCloudUpstream) setModelLocked(ctx context.Context, modelType, basic string) error {
 	body, _ := json.Marshal(map[string]interface{}{
 		"modelType":           modelType,
@@ -883,6 +979,12 @@ func (u *MCloudUpstream) setModelLocked(ctx context.Context, modelType, basic st
 		return fmt.Errorf("mcloud 切换模型到 %s 失败: code=%s msg=%s", modelType, r.Code, r.Message)
 	}
 	u.currentModel = modelType
+
+	// 切换模型后清除会话缓存（服务端 config/set 可能使旧会话失效）
+	u.sessionMu.Lock()
+	u.activeSession = nil
+	u.sessionMu.Unlock()
+
 	return nil
 }
 

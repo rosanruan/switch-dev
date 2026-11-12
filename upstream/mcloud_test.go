@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -552,5 +553,274 @@ func TestMCloudStripsMcPrefix(t *testing.T) {
 	all, _ := io.ReadAll(sr.Body)
 	if !strings.Contains(string(all), `"content":"ok"`) {
 		t.Errorf("流输出异常: %s", all)
+	}
+}
+
+// mcDataFrameWithSession 拼一帧带 sessionId/dialogueId 的 SSE data
+func mcDataFrameWithSession(modelType, out, reasoning, sessionID, dialogueID string, finish bool) string {
+	fr := map[string]interface{}{
+		"index":      0,
+		"resultType": 1,
+		"outContent": out,
+		"modelType":  modelType,
+	}
+	if reasoning != "" {
+		fr["reasoningContent"] = reasoning
+	}
+	if finish {
+		fr["finishReason"] = "stop"
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"success": true,
+		"code":    "0000",
+		"data": map[string]interface{}{
+			"sessionId":    sessionID,
+			"dialogueId":   dialogueID,
+			"flowResult":   fr,
+			"finishReason": map[bool]string{true: "stop", false: ""}[finish],
+		},
+	})
+	return mcFrame(string(payload))
+}
+
+// TestMCloudSessionReuse 会话复用：第二轮请求应携带第一轮响应返回的 sessionId/dialogueId
+func TestMCloudSessionReuse(t *testing.T) {
+	var (
+		chatCalls    int32
+		capturedBody []byte
+		bodyMu       sync.Mutex
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/assistant/chat/config"):
+			io.WriteString(w, `{"success":true,"code":"0000"}`)
+		case strings.HasSuffix(r.URL.Path, "/assistant/chat/v2/add"):
+			n := atomic.AddInt32(&chatCalls, 1)
+			// 捕获请求体用于断言
+			b, _ := io.ReadAll(r.Body)
+			bodyMu.Lock()
+			capturedBody = b
+			bodyMu.Unlock()
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			fl := w.(http.Flusher)
+			if n == 1 {
+				// 第一轮：返回 sessionId 和 dialogueId
+				io.WriteString(w, mcDataFrameWithSession("blian_qwen38_max", "你好", "", "sess-abc123", "dlg-xyz789", true))
+			} else {
+				// 第二轮：正常响应
+				io.WriteString(w, mcDataFrameWithSession("blian_qwen38_max", "世界", "", "sess-abc123", "dlg-xyz789-new", true))
+			}
+			fl.Flush()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	up := newTestMCloud(t, srv.URL)
+	ctx := context.Background()
+
+	// 第一轮对话
+	sr1, err := up.CallStream(ctx, mcChatBody("blian_qwen38_max", "user:hi"))
+	if err != nil {
+		t.Fatalf("第 1 轮 CallStream: %v", err)
+	}
+	io.Copy(io.Discard, sr1.Body)
+	sr1.Body.Close()
+
+	// 验证 activeSession 已被设置
+	up.sessionMu.Lock()
+	sess := up.activeSession
+	up.sessionMu.Unlock()
+	if sess == nil {
+		t.Fatal("第一轮后 activeSession 应为非空")
+	}
+	if sess.SessionID != "sess-abc123" {
+		t.Errorf("sessionId = %q, want sess-abc123", sess.SessionID)
+	}
+	if sess.DialogueID != "dlg-xyz789" {
+		t.Errorf("dialogueId = %q, want dlg-xyz789", sess.DialogueID)
+	}
+
+	// 第二轮对话
+	sr2, err := up.CallStream(ctx, mcChatBody("blian_qwen38_max", "user:继续"))
+	if err != nil {
+		t.Fatalf("第 2 轮 CallStream: %v", err)
+	}
+	io.Copy(io.Discard, sr2.Body)
+	sr2.Body.Close()
+
+	// 验证第二轮请求体包含顶层 sessionId（对齐官方客户端行为）
+	bodyMu.Lock()
+	body := capturedBody
+	bodyMu.Unlock()
+
+	var reqBody map[string]interface{}
+	if err := json.Unmarshal(body, &reqBody); err != nil {
+		t.Fatalf("解析第二轮请求体: %v", err)
+	}
+	sid, ok := reqBody["sessionId"]
+	if !ok || sid == nil || sid == "" {
+		t.Fatalf("第二轮请求缺少顶层 sessionId, body=%s", body)
+	}
+	if sid != "sess-abc123" {
+		t.Errorf("sessionId = %v, want sess-abc123", sid)
+	}
+	// continuationInfo 应始终为 null
+	if cont := reqBody["continuationInfo"]; cont != nil {
+		t.Errorf("continuationInfo 应为 null, got %v", cont)
+	}
+
+	if got := atomic.LoadInt32(&chatCalls); got != 2 {
+		t.Errorf("chat 调用 %d 次, want 2", got)
+	}
+}
+
+// TestMCloudSessionExpiry 会话闲置超时后自动丢弃，下次请求不带 sessionId
+func TestMCloudSessionExpiry(t *testing.T) {
+	var chatCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/assistant/chat/config"):
+			io.WriteString(w, `{"success":true,"code":"0000"}`)
+		case strings.HasSuffix(r.URL.Path, "/assistant/chat/v2/add"):
+			atomic.AddInt32(&chatCalls, 1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, mcDataFrameWithSession("blian_qwen38_max", "ok", "", "sess-expired", "dlg-expired", true))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	up := newTestMCloud(t, srv.URL)
+	ctx := context.Background()
+
+	// 第一轮
+	sr1, err := up.CallStream(ctx, mcChatBody("blian_qwen38_max", "user:hi"))
+	if err != nil {
+		t.Fatalf("CallStream: %v", err)
+	}
+	io.Copy(io.Discard, sr1.Body)
+	sr1.Body.Close()
+
+	// 模拟会话过期
+	up.sessionMu.Lock()
+	if up.activeSession != nil {
+		up.activeSession.LastUsedAt = time.Now().Add(-31 * time.Minute)
+	}
+	up.sessionMu.Unlock()
+
+	// 第二轮：过期会话应被丢弃
+	sr2, err := up.CallStream(ctx, mcChatBody("blian_qwen38_max", "user:hi again"))
+	if err != nil {
+		t.Fatalf("CallStream after expiry: %v", err)
+	}
+	io.Copy(io.Discard, sr2.Body)
+	sr2.Body.Close()
+
+	// 验证过期后 activeSession 被更新为新会话
+	up.sessionMu.Lock()
+	sess := up.activeSession
+	up.sessionMu.Unlock()
+	if sess == nil {
+		t.Fatal("第二轮后应有新 session")
+	}
+	if sess.SessionID != "sess-expired" {
+		t.Errorf("新 sessionId = %q", sess.SessionID)
+	}
+}
+
+// TestMCloudSessionClearedOnModelSwitch 切换模型后清除会话缓存
+func TestMCloudSessionClearedOnModelSwitch(t *testing.T) {
+	var chatCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/assistant/chat/config"):
+			io.WriteString(w, `{"success":true,"code":"0000"}`)
+		case strings.HasSuffix(r.URL.Path, "/assistant/chat/v2/add"):
+			n := atomic.AddInt32(&chatCalls, 1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			// 第一轮返回 blian_qwen38_max，第二轮换模型后返回 huoshan_glm_5_3
+			modelType := "blian_qwen38_max"
+			if n == 2 {
+				modelType = "huoshan_glm_5_3"
+			}
+			io.WriteString(w, mcDataFrameWithSession(modelType, "ok", "", "sess-1", "dlg-1", true))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	up := newTestMCloud(t, srv.URL)
+	ctx := context.Background()
+
+	// 第一轮建立会话
+	sr1, err := up.CallStream(ctx, mcChatBody("blian_qwen38_max", "user:hi"))
+	if err != nil {
+		t.Fatalf("CallStream: %v", err)
+	}
+	io.Copy(io.Discard, sr1.Body)
+	sr1.Body.Close()
+
+	up.sessionMu.Lock()
+	hasSession := up.activeSession != nil
+	up.sessionMu.Unlock()
+	if !hasSession {
+		t.Fatal("第一轮后应有 session")
+	}
+
+	// 换模型触发 setModelLocked → 清除 session → doStartChat 成功后重建
+	sr2, err := up.CallStream(ctx, mcChatBody("huoshan_glm_5_3", "user:hi"))
+	if err != nil {
+		t.Fatalf("换模型 CallStream: %v", err)
+	}
+	io.Copy(io.Discard, sr2.Body)
+	sr2.Body.Close()
+
+	if got := atomic.LoadInt32(&chatCalls); got != 2 {
+		t.Errorf("chat 调用 %d 次, want 2", got)
+	}
+}
+
+// TestMCloudFirstRequestNoSessionID 第一轮请求不应带 sessionId（omitempty → JSON 中不出现）
+func TestMCloudFirstRequestNoSessionID(t *testing.T) {
+	var capturedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/assistant/chat/config"):
+			io.WriteString(w, `{"success":true,"code":"0000"}`)
+		case strings.HasSuffix(r.URL.Path, "/assistant/chat/v2/add"):
+			b, _ := io.ReadAll(r.Body)
+			capturedBody = b
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, mcDataFrameWithSession("blian_qwen38_max", "ok", "", "s1", "d1", true))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	up := newTestMCloud(t, srv.URL)
+	sr, err := up.CallStream(context.Background(), mcChatBody("blian_qwen38_max", "user:hi"))
+	if err != nil {
+		t.Fatalf("CallStream: %v", err)
+	}
+	io.Copy(io.Discard, sr.Body)
+	sr.Body.Close()
+
+	var reqBody map[string]interface{}
+	if err := json.Unmarshal(capturedBody, &reqBody); err != nil {
+		t.Fatalf("解析请求体: %v", err)
+	}
+	// 首次请求 sessionId 不应出现（omitempty）
+	if sid, ok := reqBody["sessionId"]; ok && sid != nil && sid != "" {
+		t.Errorf("首次请求 sessionId 应为空或不出现, got %v", sid)
+	}
+	// continuationInfo 应始终为 null
+	if cont := reqBody["continuationInfo"]; cont != nil {
+		t.Errorf("continuationInfo 应为 null, got %v", cont)
 	}
 }
