@@ -119,14 +119,14 @@ export function RenamePreset(oldName: string, newName: string): $CancellableProm
 }
 
 /**
- * ResetConfig 重置为默认配置，端口变化时重启代理
+ * ResetConfig 重置为默认配置，端口或远程访问变化时重启代理
  */
 export function ResetConfig(): $CancellablePromise<void> {
     return $Call.ByID(287043192);
 }
 
 /**
- * SaveConfig 保存配置（校验 + 写盘 + 热加载），端口变化时重启代理
+ * SaveConfig 保存配置（校验 + 写盘 + 热加载），端口或远程访问变化时重启代理
  */
 export function SaveConfig(cfg: config$0.Config | null): $CancellablePromise<void> {
     return $Call.ByID(3633172612, cfg);

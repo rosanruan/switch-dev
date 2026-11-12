@@ -111,7 +111,11 @@ func main() {
 	if serverPort == 0 {
 		serverPort = config.DefaultPort
 	}
-	server := proxy.NewServer(jyUp, deUp, ocUp, wbUp, mcUp, "127.0.0.1", serverPort)
+	proxyHost := "127.0.0.1"
+	if cfgMgr.Get().AllowRemoteAccess {
+		proxyHost = "0.0.0.0"
+	}
+	server := proxy.NewServer(jyUp, deUp, ocUp, wbUp, mcUp, proxyHost, serverPort)
 	server.ConfigResolver = cfgMgr // 注入配置解析器
 
 	// 4.5 费率管理器（本地无费率文件时从内置硬编码还原）

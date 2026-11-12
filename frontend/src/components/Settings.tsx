@@ -435,6 +435,20 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
     }
   };
 
+  // 切换"允许远程访问"：更新 host 绑定并热重启代理
+  const toggleRemoteAccess = async (enabled: boolean) => {
+    try {
+      const cur = await ConfigService.GetConfig();
+      if (!cur) throw new Error("获取配置失败");
+      const next = { ...cur, allowRemoteAccess: enabled };
+      await ConfigService.SaveConfig(next);
+      setCfg(next);
+      flash("ok", enabled ? "已开启远程访问，代理已热重启" : "已关闭远程访问，仅限本机访问，代理已热重启");
+    } catch (e) {
+      flash("err", `保存失败: ${e}`);
+    }
+  };
+
   // 重新生成 apiKey：二次确认告知风险 -> 生成 rs-<uuid> -> 保存立即生效
   const regenKey = async () => {
     if (
@@ -644,7 +658,7 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
         <section className="bg-[var(--color-surface)] rounded-xl p-5 border border-[var(--color-border)]">
           <h2 className="font-semibold mb-1">代理端口</h2>
           <p className="text-xs text-[var(--color-text-dim)] mb-3">
-            cc-switch 的 baseURL 要对应此端口（http://127.0.0.1:端口）。保存后代理会重启切换端口。
+            cc-switch 的 baseURL 要对应此端口。开启远程访问后局域网内其他设备也可访问。
           </p>
           <div className="flex items-center gap-3">
             <input
@@ -659,7 +673,7 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
               className="w-32 px-3 py-1.5 text-sm rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono"
             />
             <span className="text-sm text-[var(--color-text-dim)]">
-              监听 http://127.0.0.1:{cfg.port || 8787}
+              监听 {cfg?.allowRemoteAccess ? "0.0.0.0" : "127.0.0.1"}:{cfg.port || 8787}
             </span>
             <button
               onClick={() => setCfg({ ...cfg, port: 8787 })}
@@ -674,6 +688,24 @@ export default function Settings({ creds, config }: { creds: AllCredStatus | nul
             >
               {savingPort ? "保存中..." : "💾 保存端口"}
             </button>
+          </div>
+          {/* 允许远程访问开关 */}
+          <div className="flex items-center justify-between mt-4 pt-4 border-t border-[var(--color-border)]">
+            <div>
+              <h2 className="font-semibold text-sm">允许远程访问</h2>
+              <p className="text-xs text-[var(--color-text-dim)] mt-0.5">
+                开启后监听 0.0.0.0，局域网内其他设备可通过本机 IP 访问代理。修改后自动热重启代理服务。
+              </p>
+            </div>
+            <label className="inline-flex items-center cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={cfg?.allowRemoteAccess ?? false}
+                onChange={(e) => toggleRemoteAccess(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-10 h-5 bg-[var(--color-surface-2)] rounded-full peer-checked:bg-[var(--color-primary)] relative transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5" />
+            </label>
           </div>
         </section>
 

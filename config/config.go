@@ -151,6 +151,7 @@ type Config struct {
 	Port             int                         `json:"port"`                // 代理监听端口
 	APIKey           string                      `json:"apiKey"`              // 客户端接入密钥（AuthEnabled=true 时严格校验）
 	AuthEnabled      bool                        `json:"authEnabled"`         // 是否要求客户端携带 apiKey；默认 true，关闭后网关不鉴权
+	AllowRemoteAccess bool                        `json:"allowRemoteAccess"`   // 是否允许局域网远程访问（绑定 0.0.0.0 而非 127.0.0.1）
 	AutoStart        bool                        `json:"autoStart"`           // 登录系统时自动启动（静默到托盘，以 --tray 启动）
 	AutoUpdate       UpdateConfig                `json:"update"`              // 自动升级配置
 	LogFile          LogFileConfig               `json:"logFile"`             // 控制台日志落地文件配置
@@ -203,6 +204,7 @@ func Defaults() *Config {
 		},
 		Port:         DefaultPort,
 		AuthEnabled:  true,
+		AllowRemoteAccess: false,
 		AutoStart:    false,
 		Presets:      []Preset{},
 		ActivePreset: "",
@@ -444,6 +446,7 @@ func (c *Config) Clone() *Config {
 		Port:             c.Port,
 		APIKey:           c.APIKey,
 		AuthEnabled:      c.AuthEnabled,
+		AllowRemoteAccess: c.AllowRemoteAccess,
 		AutoStart:        c.AutoStart,
 		AutoUpdate:       c.AutoUpdate,
 		LogFile:          c.LogFile,
@@ -488,6 +491,7 @@ func (c *Config) Update(newCfg *Config) error {
 	c.Port = newCfg.Port
 	c.APIKey = newCfg.APIKey
 	c.AuthEnabled = newCfg.AuthEnabled
+	c.AllowRemoteAccess = newCfg.AllowRemoteAccess
 	c.AutoStart = newCfg.AutoStart
 	c.AutoUpdate = newCfg.AutoUpdate
 	c.LogFile = newCfg.LogFile

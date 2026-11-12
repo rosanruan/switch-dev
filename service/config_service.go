@@ -49,16 +49,16 @@ func (s *ConfigService) GetConfig() *config.Config {
 	return s.mgr.Get()
 }
 
-// SaveConfig 保存配置（校验 + 写盘 + 热加载），端口变化时重启代理
+// SaveConfig 保存配置（校验 + 写盘 + 热加载），端口或远程访问变化时重启代理
 func (s *ConfigService) SaveConfig(cfg *config.Config) error {
-	oldPort := s.mgr.Get().Port
+	oldCfg := s.mgr.Get()
 	if err := s.mgr.SaveConfig(cfg); err != nil {
 		return err
 	}
-	// 端口变了：停旧代理，用新端口重启
-	if cfg.Port != oldPort {
-		if err := s.restartProxyOnPort(cfg.Port); err != nil {
-			return fmt.Errorf("配置已保存，但代理切换端口失败: %w", err)
+	// 端口或远程访问变了：停旧代理，用新配置重启
+	if cfg.Port != oldCfg.Port || cfg.AllowRemoteAccess != oldCfg.AllowRemoteAccess {
+		if err := s.restartProxy(cfg.Port, cfg.AllowRemoteAccess); err != nil {
+			return fmt.Errorf("配置已保存，但代理重启失败: %w", err)
 		}
 	}
 	// 同步操作系统登录自启项（按配置注册/注销）
@@ -71,16 +71,16 @@ func (s *ConfigService) SaveConfig(cfg *config.Config) error {
 	return nil
 }
 
-// ResetConfig 重置为默认配置，端口变化时重启代理
+// ResetConfig 重置为默认配置，端口或远程访问变化时重启代理
 func (s *ConfigService) ResetConfig() error {
-	oldPort := s.mgr.Get().Port
+	oldCfg := s.mgr.Get()
 	if err := s.mgr.ResetConfig(); err != nil {
 		return err
 	}
-	newPort := s.mgr.Get().Port
-	if newPort != oldPort {
-		if err := s.restartProxyOnPort(newPort); err != nil {
-			return fmt.Errorf("配置已重置，但代理切换端口失败: %w", err)
+	newCfg := s.mgr.Get()
+	if newCfg.Port != oldCfg.Port || newCfg.AllowRemoteAccess != oldCfg.AllowRemoteAccess {
+		if err := s.restartProxy(newCfg.Port, newCfg.AllowRemoteAccess); err != nil {
+			return fmt.Errorf("配置已重置，但代理重启失败: %w", err)
 		}
 	}
 	// 重置后自启应关闭：注销系统登录项（失败不阻断重置）
@@ -141,13 +141,18 @@ func (s *ConfigService) ClearActivePreset() error {
 	return nil
 }
 
-// restartProxyOnPort 停止当前代理，用新端口重启
-func (s *ConfigService) restartProxyOnPort(port int) error {
+// restartProxy 停止当前代理，用新端口/新 host 重启
+func (s *ConfigService) restartProxy(port int, allowRemote bool) error {
 	if s.core == nil || s.core.server == nil {
 		return nil
 	}
 	s.core.server.Stop()
 	s.core.server.Port = port
+	if allowRemote {
+		s.core.server.Host = "0.0.0.0"
+	} else {
+		s.core.server.Host = "127.0.0.1"
+	}
 	return s.core.server.Start()
 }
 

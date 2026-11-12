@@ -233,14 +233,14 @@ export default function Dashboard({ proxy, creds, config, onGoCredentials }: Pro
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[var(--color-text-dim)] w-16 shrink-0">Anthropic</span>
                 <code className="flex-1 px-3 py-1.5 rounded-md bg-[var(--color-surface-2)] text-sm font-mono text-[var(--color-text)]">
-                  http://127.0.0.1:{proxy?.port ?? 8787}
+                  http://{proxy?.host ?? "127.0.0.1"}:{proxy?.port ?? 8787}
                 </code>
-                <CopyButton text={`http://127.0.0.1:${proxy?.port ?? 8787}`} />
+                <CopyButton text={`http://${proxy?.host ?? "127.0.0.1"}:${proxy?.port ?? 8787}`} />
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[var(--color-text-dim)] w-16 shrink-0">OpenAI</span>
                 <code className="flex-1 px-3 py-1.5 rounded-md bg-[var(--color-surface-2)] text-sm font-mono text-[var(--color-text)]">
-                  http://127.0.0.1:{proxy?.port ?? 8787}/v1
+                  http://{proxy?.host ?? "127.0.0.1"}:{proxy?.port ?? 8787}/v1
                 </code>
                 <CopyButton text={`http://127.0.0.1:${proxy?.port ?? 8787}/v1`} />
               </div>

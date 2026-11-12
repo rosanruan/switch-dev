@@ -96,6 +96,11 @@ export class Config {
     "authEnabled": boolean;
 
     /**
+     * 是否允许局域网远程访问（绑定 0.0.0.0 而非 127.0.0.1）
+     */
+    "allowRemoteAccess": boolean;
+
+    /**
      * 登录系统时自动启动（静默到托盘，以 --tray 启动）
      */
     "autoStart": boolean;
@@ -162,6 +167,9 @@ export class Config {
         if (!("authEnabled" in $$source)) {
             this["authEnabled"] = false;
         }
+        if (!("allowRemoteAccess" in $$source)) {
+            this["allowRemoteAccess"] = false;
+        }
         if (!("autoStart" in $$source)) {
             this["autoStart"] = false;
         }
@@ -193,11 +201,11 @@ export class Config {
         const $$createField3_0 = $$createType3;
         const $$createField5_0 = $$createType7;
         const $$createField6_0 = $$createType3;
-        const $$createField11_0 = $$createType8;
-        const $$createField12_0 = $$createType9;
-        const $$createField13_0 = $$createType11;
-        const $$createField15_0 = $$createType12;
-        const $$createField16_0 = $$createType14;
+        const $$createField12_0 = $$createType8;
+        const $$createField13_0 = $$createType9;
+        const $$createField14_0 = $$createType11;
+        const $$createField16_0 = $$createType12;
+        const $$createField17_0 = $$createType14;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("autoChain" in $$parsedSource) {
             $$parsedSource["autoChain"] = $$createField1_0($$parsedSource["autoChain"]);
@@ -215,19 +223,19 @@ export class Config {
             $$parsedSource["uaGlobalFallback"] = $$createField6_0($$parsedSource["uaGlobalFallback"]);
         }
         if ("update" in $$parsedSource) {
-            $$parsedSource["update"] = $$createField11_0($$parsedSource["update"]);
+            $$parsedSource["update"] = $$createField12_0($$parsedSource["update"]);
         }
         if ("logFile" in $$parsedSource) {
-            $$parsedSource["logFile"] = $$createField12_0($$parsedSource["logFile"]);
+            $$parsedSource["logFile"] = $$createField13_0($$parsedSource["logFile"]);
         }
         if ("presets" in $$parsedSource) {
-            $$parsedSource["presets"] = $$createField13_0($$parsedSource["presets"]);
+            $$parsedSource["presets"] = $$createField14_0($$parsedSource["presets"]);
         }
         if ("provider" in $$parsedSource) {
-            $$parsedSource["provider"] = $$createField15_0($$parsedSource["provider"]);
+            $$parsedSource["provider"] = $$createField16_0($$parsedSource["provider"]);
         }
         if ("upstreams" in $$parsedSource) {
-            $$parsedSource["upstreams"] = $$createField16_0($$parsedSource["upstreams"]);
+            $$parsedSource["upstreams"] = $$createField17_0($$parsedSource["upstreams"]);
         }
         return new Config($$parsedSource as Partial<Config>);
     }
