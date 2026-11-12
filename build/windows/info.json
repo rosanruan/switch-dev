@@ -1,10 +1,10 @@
 {
 	"fixed": {
-		"file_version": "0.1.8"
+		"file_version": "0.1.9"
 	},
 	"info": {
 		"0000": {
-			"ProductVersion": "0.1.8",
+			"ProductVersion": "0.1.9",
 			"CompanyName": "Local",
 			"FileDescription": "Multi-upstream AI model proxy with visual management",
 			"LegalCopyright": "© 2026, My Company",
