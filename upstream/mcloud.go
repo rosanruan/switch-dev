@@ -300,6 +300,24 @@ type mcloudOpenAITool struct {
 	} `json:"function"`
 }
 
+// mcloudBodyToolNames 从请求 body 提取 tools 清单的规范名，
+// 供流式解析器把模型笔误的工具名（如 bash）纠回规范名（Bash）。
+func mcloudBodyToolNames(body []byte) []string {
+	var req struct {
+		Tools []mcloudOpenAITool `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil
+	}
+	var names []string
+	for _, t := range req.Tools {
+		if t.Function.Name != "" {
+			names = append(names, t.Function.Name)
+		}
+	}
+	return names
+}
+
 // mcloudToolsPrompt 把 tools 定义转写为注入 system 的文本清单。
 // 无 tools 时返回空串（纯聊天请求不注入，避免干扰模型）。
 func mcloudToolsPrompt(tools []mcloudOpenAITool) string {
@@ -309,7 +327,8 @@ func mcloudToolsPrompt(tools []mcloudOpenAITool) string {
 	var b strings.Builder
 	b.WriteString("你可以调用以下工具。需要调用工具时，在回复末尾严格输出一行：\n")
 	b.WriteString("[调用工具 工具名({\"参数名\":\"值\"})]\n")
-	b.WriteString("工具名必须来自下方列表，参数必须是合法 JSON。\n\n")
+	b.WriteString("工具名必须来自下方列表，参数必须是合法 JSON。\n")
+	b.WriteString("右圆括号 ) 和右方括号 ] 一个都不能少，禁止在 ] 前多写 }。\n\n")
 	for _, t := range tools {
 		name := t.Function.Name
 		if name == "" {
@@ -491,10 +510,12 @@ type mcloudSSEConverter struct {
 	dialogueID string
 }
 
-func newMCloudSSEConverter(body io.ReadCloser) *mcloudSSEConverter {
+func newMCloudSSEConverter(body io.ReadCloser, toolNames []string) *mcloudSSEConverter {
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	return &mcloudSSEConverter{sc: sc, body: body}
+	conv := &mcloudSSEConverter{sc: sc, body: body}
+	conv.parser.setToolNames(toolNames)
+	return conv
 }
 
 // prime 预读到首个有输出（内容/终止/错误）的帧。CallStream 在返回前调用：
@@ -789,6 +810,7 @@ func (u *MCloudUpstream) prepareChat(ctx context.Context, body []byte) (*mcloudS
 	if err != nil {
 		return nil, "", err
 	}
+	toolNames := mcloudBodyToolNames(body)
 
 	// 获取当前活跃会话（超时自动丢弃）
 	u.sessionMu.Lock()
@@ -812,7 +834,7 @@ func (u *MCloudUpstream) prepareChat(ctx context.Context, body []byte) (*mcloudS
 			return nil, "", err
 		}
 
-		conv, reqID, err := u.doStartChat(ctx, chatBody, modelType, basic, len([]rune(dialogue)))
+		conv, reqID, err := u.doStartChat(ctx, chatBody, modelType, basic, len([]rune(dialogue)), toolNames)
 		if err == nil {
 			// 成功后更新会话状态
 			u.sessionMu.Lock()
@@ -861,7 +883,7 @@ func (u *MCloudUpstream) prepareChat(ctx context.Context, body []byte) (*mcloudS
 // doStartChat 单次尝试：持模型锁（切模型 → POST → 首帧确认 → 释放）
 // promptRunes 在建转换器时就写入 —— 单帧即结束的上游会在 prime() 内就 emitFinish，
 // 事后再补会丢 prompt token。
-func (u *MCloudUpstream) doStartChat(ctx context.Context, chatBody []byte, modelType, basic string, promptRunes int) (*mcloudSSEConverter, string, error) {
+func (u *MCloudUpstream) doStartChat(ctx context.Context, chatBody []byte, modelType, basic string, promptRunes int, toolNames []string) (*mcloudSSEConverter, string, error) {
 	reqID := "mc-" + randString(8)
 
 	u.modelMu.Lock()
@@ -904,7 +926,7 @@ func (u *MCloudUpstream) doStartChat(ctx context.Context, chatBody []byte, model
 		return nil, "", fmt.Errorf("mcloud chat 上游错误: %s", detail)
 	}
 
-	conv := newMCloudSSEConverter(newIdleTimeoutReader(resp.Body, mcloudIdleTimeout))
+	conv := newMCloudSSEConverter(newIdleTimeoutReader(resp.Body, mcloudIdleTimeout), toolNames)
 	conv.promptRunes = promptRunes
 	if err := conv.prime(); err != nil {
 		u.modelMu.Unlock()

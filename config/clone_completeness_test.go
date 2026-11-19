@@ -116,6 +116,7 @@ func makeNonZeroConfig() *Config {
 		Port:             8787,
 		APIKey:           "sk-test-nonzero",
 		AuthEnabled:      true,
+		AllowRemoteAccess: true,
 		AutoStart:        true,
 		AutoUpdate: UpdateConfig{
 			Enabled:   true,

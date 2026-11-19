@@ -46,9 +46,36 @@ type mcloudToolCallParser struct {
 	toolCalls []mcloudToolCall // 已解析出的工具调用（按出现顺序）
 	content   strings.Builder  // 普通文本累积（不含工具调用），供非流式聚合
 	nextIndex int
+	tools     map[string]string // 小写工具名 → 规范名（来自请求 tools 清单），纠模型笔误的大小写
 }
 
 func (p *mcloudToolCallParser) hasToolCall() bool { return len(p.toolCalls) > 0 }
+
+// setToolNames 登记请求 tools 清单的规范名，供 emitToolCallDeltas 做名字纠错。
+func (p *mcloudToolCallParser) setToolNames(names []string) {
+	if len(names) == 0 {
+		return
+	}
+	m := make(map[string]string, len(names))
+	for _, n := range names {
+		if n != "" {
+			m[strings.ToLower(n)] = n
+		}
+	}
+	p.tools = m
+}
+
+// canonicalName 把模型笔误的工具名（如 bash）映射回请求清单里的规范名（Bash）。
+// 找不到映射时原样返回，由客户端报「未知工具」触发重试。
+func (p *mcloudToolCallParser) canonicalName(name string) string {
+	if p.tools == nil {
+		return name
+	}
+	if c, ok := p.tools[strings.ToLower(name)]; ok {
+		return c
+	}
+	return name
+}
 
 // feed 处理一段新文本，返回需要 emit 的 delta 序列。
 func (p *mcloudToolCallParser) feed(chunk string) []mcStreamDelta {
@@ -105,36 +132,46 @@ func (p *mcloudToolCallParser) feed(chunk string) []mcStreamDelta {
 	}
 }
 
-// flush 流结束时调用：把未决文本作为工具调用（[调用工具 Name] 无参数）或普通文本吐出。
+// flush 流结束时调用，循环处理到缓冲清空：先严格解析，失败再容错提取（模型笔误），
+// 都不像工具调用才按正文吐出。循环保证「一个畸形调用 + 后续正常调用」同缓冲时
+// 全部还原，不再整段泄漏成正文。
 func (p *mcloudToolCallParser) flush() []mcStreamDelta {
 	var out []mcStreamDelta
 	s := p.buf
 	p.buf = ""
 	p.inBuf = false
-	if s == "" {
-		return out
-	}
-
-	// 1) 完整工具调用（Name({args}) 或 Name] {args}）
-	if status, tc, consumed := tryParseMCloudToolCall(s); status == "matched" {
-		out = append(out, p.emitToolCallDeltas(tc)...)
-		if consumed < len(s) {
-			rest := s[consumed:]
-			p.content.WriteString(rest)
-			out = append(out, mcStreamDelta{Content: rest})
+	for s != "" {
+		if status, tc, consumed := tryParseMCloudToolCall(s); status == "matched" {
+			out = append(out, p.emitToolCallDeltas(tc)...)
+			s = s[consumed:]
+			continue
 		}
-		return out
+		if tc, consumed, ok := salvageMCloudToolCall(s); ok {
+			out = append(out, p.emitToolCallDeltas(tc)...)
+			s = s[consumed:]
+			continue
+		}
+		// 非工具调用：正文透传到下一个 [ 为止（其后可能还藏着工具调用，回循环继续）
+		var cut int
+		switch {
+		case strings.HasPrefix(s, "["):
+			if next := strings.IndexByte(s[1:], '['); next >= 0 {
+				cut = next + 1
+			} else {
+				cut = len(s)
+			}
+		default:
+			if idx := strings.IndexByte(s, '['); idx > 0 {
+				cut = idx
+			} else {
+				cut = len(s)
+			}
+		}
+		text := s[:cut]
+		p.content.WriteString(text)
+		out = append(out, mcStreamDelta{Content: text})
+		s = s[cut:]
 	}
-
-	// 2) 无参数工具调用 [调用工具 Name]（流已结束，args 不会再出现）
-	if name, ok := tryParseBareToolName(s); ok {
-		out = append(out, p.emitToolCallDeltas(mcloudToolCall{name: name})...)
-		return out
-	}
-
-	// 3) 其余：普通文本
-	p.content.WriteString(s)
-	out = append(out, mcStreamDelta{Content: s})
 	return out
 }
 
@@ -144,6 +181,7 @@ func (p *mcloudToolCallParser) emitToolCallDeltas(tc mcloudToolCall) []mcStreamD
 	tc.index = p.nextIndex
 	p.nextIndex++
 	tc.id = "call_" + randString(12)
+	tc.name = p.canonicalName(tc.name)
 	p.toolCalls = append(p.toolCalls, tc)
 
 	var out []mcStreamDelta
@@ -284,13 +322,20 @@ func findBalancedParen(s string, start int, open, close byte) (int, bool) {
 	return 0, false
 }
 
-// tryParseBareToolName 判断 s 是否为 [调用工具 Name]（无参数，] 结尾）。
-func tryParseBareToolName(s string) (string, bool) {
+// salvageMCloudToolCall 流结束时的容错提取（仅 flush 调用）。严格语法对模型笔误
+// （缺 )、缺 ]、] 前多写 }）会永远停在 partial，流结束时整段泄漏成正文 ——
+// 客户端拿到的是普通文本：不执行工具、不回 tool_result，agent loop 直接死。
+// 这里强制提取：名字照常识别，参数取名字后第一个括号平衡的 {...}；JSON 没闭合
+// （流被截断）时参数按原文照转。哪怕参数是坏的也照样返回 tool_call —— 客户端会
+// 对坏参数回「工具执行失败」的 tool_result，回合能继续重试；漏成正文是回合直接死。
+// ok=false 表示不像工具调用（无名字，或名字后跟正文），调用方按正文处理。
+func salvageMCloudToolCall(s string) (tc mcloudToolCall, consumed int, ok bool) {
 	const prefix = mcloudToolCallPrefix
 	if !strings.HasPrefix(s, prefix) {
-		return "", false
+		return mcloudToolCall{}, 0, false
 	}
 	rest := s[len(prefix):]
+	base := len(prefix)
 	i := 0
 	for i < len(rest) && isToolCallSpace(rest[i]) {
 		i++
@@ -300,16 +345,41 @@ func tryParseBareToolName(s string) (string, bool) {
 		j++
 	}
 	if j == i {
-		return "", false
+		return mcloudToolCall{}, 0, false // 名字都没有
 	}
 	name := rest[i:j]
-	for k := j; k < len(rest); k++ {
-		if !isToolCallSpace(rest[k]) {
-			return name, rest[k] == ']' && k == len(rest)-1
+
+	k := j
+	for k < len(rest) && isToolCallSpace(rest[k]) {
+		k++
+	}
+	if k < len(rest) && rest[k] == '(' {
+		k++ // 容忍缺 ) 的 Name({json} 笔误：跳过开括号直取 JSON
+		for k < len(rest) && isToolCallSpace(rest[k]) {
+			k++
 		}
 	}
-	// 全是空白（无 ]）：不是裸工具调用
-	return "", false
+	if k < len(rest) && rest[k] == '{' {
+		if end, balanced := findBalancedParen(rest, k, '{', '}'); balanced {
+			args := rest[k : end+1]
+			q := end + 1
+			for q < len(rest) && (isToolCallSpace(rest[q]) || rest[q] == ')' || rest[q] == ']' || rest[q] == '}') {
+				q++ // 吞掉参数后的 ) ] } 收尾残渣，剩余文本留给外层循环
+			}
+			return mcloudToolCall{name: name, args: args}, base + q, true
+		}
+		// JSON 未闭合（截断）：参数按原文截到结尾照转，客户端报参数错误后可重试
+		return mcloudToolCall{name: name, args: rest[k:]}, len(s), true
+	}
+	// 无参数：名字后只剩 ] ) } 空白或已到头才当裸名字调用，跟了正文则按正文处理
+	q := k
+	for q < len(rest) && (isToolCallSpace(rest[q]) || rest[q] == ']' || rest[q] == ')' || rest[q] == '}') {
+		q++
+	}
+	if q < len(rest) {
+		return mcloudToolCall{}, 0, false
+	}
+	return mcloudToolCall{name: name}, base + q, true
 }
 
 func isToolCallSpace(b byte) bool {
