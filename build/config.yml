@@ -11,7 +11,7 @@ info:
   description: "Multi-upstream LLM proxy — exposes JoyCode/DevEco/OpenCode/WorkBuddy models as standard Anthropic/OpenAI APIs for Claude Code" # The application description
   copyright: "(c) 2025-2026, Switch Dev Contributors" # Copyright text
   comments: "Local LLM proxy with Wails desktop GUI" # Comments
-  version: "0.1.10" # The application version
+  version: "0.1.11" # The application version
   cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles
                                # Should match the name of your .icon file without the extension
                                # If not set and Assets.car exists, defaults to "appicon"
