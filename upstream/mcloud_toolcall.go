@@ -16,6 +16,8 @@ import (
 //   - [调用工具 Bash({"command":"ls"})]        （qwen 式：参数包在括号里）
 //   - [调用工具 Bash] {"command":"ls"}          （deepseek 式：] 后跟 JSON）
 //   - [调用工具 Bash]                           （无参数）
+// deepseek 系模型偶尔还会无视注入格式、按原生习惯输出 DSML 标记
+// （<｜｜DSML｜｜ invoke name="...">...），识别与容错提取见 mcloud_dsml.go。
 
 // mcStreamToolCall OpenAI 流式 tool_calls delta 的单项（json tag 与下游 streamOpenAIChunk 一致）
 type mcStreamToolCall struct {
@@ -38,11 +40,13 @@ type mcloudToolCall struct {
 	args  string // JSON 参数原文（可能为空）
 }
 
-// mcloudToolCallParser 逐 chunk 累积文本，识别 [调用工具 ...] 标记。
-// 只缓冲「从最近的 [ 开始的文本」，普通文本实时透传，尽量保持流式实时性。
+// mcloudToolCallParser 逐 chunk 累积文本，识别 [调用工具 ...] 标记与 DSML 标记。
+// 只缓冲「从最近的候选位置开始的文本」（[ 或可能的 DSML 起始 <），普通文本实时透传，
+// 尽量保持流式实时性。
 type mcloudToolCallParser struct {
-	buf       string // 未决文本（遇到 [ 后累积在此）
+	buf       string // 未决文本（遇到候选后累积在此）
 	inBuf     bool
+	afterDSML bool // 刚消化完一段 DSML 单元：后续 chunk 的前导空白先扣住再判归属
 	toolCalls []mcloudToolCall // 已解析出的工具调用（按出现顺序）
 	content   strings.Builder  // 普通文本累积（不含工具调用），供非流式聚合
 	nextIndex int
@@ -81,34 +85,70 @@ func (p *mcloudToolCallParser) canonicalName(name string) string {
 func (p *mcloudToolCallParser) feed(chunk string) []mcStreamDelta {
 	var out []mcStreamDelta
 
-	if !p.inBuf {
-		idx := strings.IndexByte(chunk, '[')
+	if p.inBuf {
+		p.buf += chunk
+	} else {
+		held := ""
+		if p.afterDSML {
+			// 刚消化完一段 DSML：前导空白先扣住——DSML 是多行标记，模型会在单元间
+			// 换行缩进；下一段还是 DSML 就随单元吞掉，是正文就原样透传
+			n := len(chunk) - len(strings.TrimLeft(chunk, " \t\n\r"))
+			if n == len(chunk) {
+				// 空/全空白 chunk：进缓冲继续等归属
+				p.buf += chunk
+				if p.buf != "" {
+					p.inBuf = true
+				}
+				return out
+			}
+			held = chunk[:n]
+			chunk = chunk[n:]
+		}
+		idx := nextBufCandidate(chunk)
 		if idx < 0 {
-			if chunk != "" {
-				p.content.WriteString(chunk)
-				out = append(out, mcStreamDelta{Content: chunk})
+			// 纯正文：扣住的空白也是正文，一并透传
+			text := held + chunk
+			if text != "" {
+				p.content.WriteString(text)
+				out = append(out, mcStreamDelta{Content: text})
 			}
 			return out
 		}
 		if idx > 0 {
-			p.content.WriteString(chunk[:idx])
-			out = append(out, mcStreamDelta{Content: chunk[:idx]})
+			text := held + chunk[:idx]
+			p.content.WriteString(text)
+			out = append(out, mcStreamDelta{Content: text})
+			held = ""
 		}
-		p.buf = chunk[idx:]
+		// idx == 0：扣住的空白（若有）属 DSML 单元间隔，随缓冲进主循环被单元的空白跳跃吞掉
+		p.buf += held + chunk[idx:]
 		p.inBuf = true
-	} else {
-		p.buf += chunk
+		p.afterDSML = false
 	}
 
 	for {
+		if status, tcs, consumed := tryParseDSMLBlock(p.buf); status == "matched" {
+			for _, tc := range tcs {
+				out = append(out, p.emitToolCallDeltas(tc)...)
+			}
+			p.buf = p.buf[consumed:]
+			if p.buf == "" {
+				p.inBuf = false
+				p.afterDSML = true
+				return out
+			}
+			continue
+		} else if status == "partial" {
+			return out
+		}
 		status, tc, consumed := tryParseMCloudToolCall(p.buf)
 		switch status {
 		case "partial":
 			return out
 		case "rejected":
-			// buf 以 [ 开头但不是 [调用工具 前缀：flush 到下一个 [ 之前，继续找
+			// buf 开头不是 DSML 也不是 [调用工具：flush 到下一个候选位置之前，继续找
 			rest := p.buf
-			next := strings.Index(rest[1:], "[")
+			next := nextBufCandidate(rest[1:])
 			if next < 0 {
 				p.content.WriteString(rest)
 				out = append(out, mcStreamDelta{Content: rest})
@@ -127,22 +167,37 @@ func (p *mcloudToolCallParser) feed(chunk string) []mcStreamDelta {
 				p.inBuf = false
 				return out
 			}
-			// 剩余部分可能又含 [，继续循环
+			// 剩余部分可能又含候选，继续循环
 		}
 	}
 }
 
-// flush 流结束时调用，循环处理到缓冲清空：先严格解析，失败再容错提取（模型笔误），
-// 都不像工具调用才按正文吐出。循环保证「一个畸形调用 + 后续正常调用」同缓冲时
-// 全部还原，不再整段泄漏成正文。
+// flush 流结束时调用，循环处理到缓冲清空：先严格解析（文本协议 / DSML），失败再
+// 容错提取（DSML 截断段 / 模型笔误的文本协议），都不像工具调用才按正文吐出。
+// 循环保证「一个畸形调用 + 后续正常调用」同缓冲时全部还原，不再整段泄漏成正文。
 func (p *mcloudToolCallParser) flush() []mcStreamDelta {
 	var out []mcStreamDelta
 	s := p.buf
 	p.buf = ""
 	p.inBuf = false
+	p.afterDSML = false
 	for s != "" {
 		if status, tc, consumed := tryParseMCloudToolCall(s); status == "matched" {
 			out = append(out, p.emitToolCallDeltas(tc)...)
+			s = s[consumed:]
+			continue
+		}
+		if status, tcs, consumed := tryParseDSMLBlock(s); status == "matched" {
+			for _, tc := range tcs {
+				out = append(out, p.emitToolCallDeltas(tc)...)
+			}
+			s = s[consumed:]
+			continue
+		}
+		if tcs, consumed, ok := salvageDSML(s); ok {
+			for _, tc := range tcs {
+				out = append(out, p.emitToolCallDeltas(tc)...)
+			}
 			s = s[consumed:]
 			continue
 		}
@@ -151,21 +206,19 @@ func (p *mcloudToolCallParser) flush() []mcStreamDelta {
 			s = s[consumed:]
 			continue
 		}
-		// 非工具调用：正文透传到下一个 [ 为止（其后可能还藏着工具调用，回循环继续）
+		// 非工具调用：正文透传到下一个候选位置为止（其后可能还藏着工具调用，回循环继续）
 		var cut int
-		switch {
-		case strings.HasPrefix(s, "["):
-			if next := strings.IndexByte(s[1:], '['); next >= 0 {
-				cut = next + 1
+		if next := nextBufCandidate(s); next > 0 {
+			cut = next
+		} else if next == 0 {
+			// s 自身以候选开头但各解析器都没认领：放行一个字符再找下一个候选
+			if n2 := nextBufCandidate(s[1:]); n2 >= 0 {
+				cut = n2 + 1
 			} else {
 				cut = len(s)
 			}
-		default:
-			if idx := strings.IndexByte(s, '['); idx > 0 {
-				cut = idx
-			} else {
-				cut = len(s)
-			}
+		} else {
+			cut = len(s)
 		}
 		text := s[:cut]
 		p.content.WriteString(text)
